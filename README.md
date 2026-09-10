@@ -102,7 +102,9 @@ token-watching/
  
 - **Backend:** FastAPI (Python), `tiktoken`, Anthropic/OpenAI SDK
 - **Extension:** Manifest V3, JavaScript/React (popup)
+- **Deployment:** Railway/Render (backend), Vercel (dashboard)
+  
+- **Future Goal:s**
 - **Dashboard:** React (Vite), Tailwind, Recharts
 - **Database:** SQLite (dev) → Postgres (production path)
-- **Deployment:** Railway/Render (backend), Vercel (dashboard)
 ---
