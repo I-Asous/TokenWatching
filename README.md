@@ -1,0 +1,108 @@
+# Token Watching
+ 
+**Real-time prompt cost optimization, built into the everyday tools you already use.**
+ 
+Token Watching is a browser extension that lives in your browser and supports you as you prompt. Using a 3-agent pipeline, 
+it shows real-time token cost and offers an optimized rewrite of your prompt before you even hit enter.
+ 
+---
+
+ ## Team
+ 
+| Name | Role |
+|---|---|
+| Islam A | Agents & Orchestrator |
+| Maida Kucevic | API & Data Layer (routes, DB, auth, cost calc) |
+| Vincenzo Monterosso | Integration & Infra (CORS, deployment, testing, error handling) |
+| Alejandro Moya Ramirez | Frontend (extension popup + dashboard) |
+
+---
+
+## The Problem
+ 
+With the fast emergence of AI Engineering, proper prompting is more important than ever. As teams adopt LLMs at scale, 
+poorly written prompts burn through tokens, which in turn burns through the budget. Most teams have no visibility into which prompts are wasteful, 
+no way to catch it in the moment, and no easy way to fix it without slowing people down.
+ 
+## The Solution
+ 
+Token Watching sits on top of the AI tools people already use (ChatGPT, Claude.ai), watches prompts as they're typed, and runs them through a 3-agent pipeline to:
+ 
+1. Calculate real-time token cost
+2. Rewrite the prompt to be more efficient
+3. Validate that the optimized version still produces comparable output quality
+The result: fewer wasted tokens, lower cost, and a better prompt every time.
+ 
+---
+ 
+## How It Works
+ 
+```
+User types a prompt
+        │
+        ▼
+  Content Script (detects prompt in ChatGPT/Claude.ai)
+        │
+        ▼
+  Background Service Worker
+        │
+        ▼
+  Backend Orchestrator
+        │
+    ┌───┴────┬─────────┐
+    ▼        ▼         ▼
+ Agent 1   Agent 2   Agent 3
+ Auditor   Optimizer Validator
+    │        │         │
+    └───┬────┴─────────┘
+        ▼
+   Saved to DB → shown in Extension Popup + Dashboard
+```
+ 
+### The Agents
+ 
+| Agent | Role |
+|---|---|
+| **1. The Auditor** | Counts tokens, calculates cost, flags waste patterns (redundancy, verbosity, unnecessary context) |
+| **2. The Optimizer** | Rewrites the prompt to cut tokens while preserving intent |
+| **3. The Validator** | Compares original vs. optimized output quality to confirm nothing was lost |
+ 
+### The Orchestrator
+ 
+A lightweight pipeline controller that sequences the agents, passes state between them, handles errors/retries, and streams live status updates to the UI.
+ 
+---
+ 
+## Project Structure
+ 
+```
+token-watching/
+├── extension/          # Chrome extension (Manifest V3)
+│   ├── content-scripts/  # Detects prompts on ChatGPT/Claude.ai
+│   ├── background/       # Service worker — talks to backend
+│   ├── popup/             # Extension popup UI (React)
+│   └── options/           # Settings (API key, model selection)
+│
+├── backend/             # FastAPI app
+│   ├── orchestrator.py    # Pipeline controller
+│   ├── agents/             # Auditor, Optimizer, Validator
+│   ├── routes/             # /analyze, /history, /stats
+│   ├── models/             # DB schema + Pydantic models
+│   └── services/           # Token counting, cost calculation
+│
+├── dashboard/           # Web app — analytics/history view
+│   └── src/
+│
+└── README.md
+```
+ 
+---
+ 
+## Tech Stack
+ 
+- **Backend:** FastAPI (Python), `tiktoken`, Anthropic/OpenAI SDK
+- **Extension:** Manifest V3, JavaScript/React (popup)
+- **Dashboard:** React (Vite), Tailwind, Recharts
+- **Database:** SQLite (dev) → Postgres (production path)
+- **Deployment:** Railway/Render (backend), Vercel (dashboard)
+---
