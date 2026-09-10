@@ -1,0 +1,28 @@
+name: Build Jekyll Site with Docker
+
+on:
+  push:
+    branches: [ main ]  # Triggers when you push code to the main branch
+
+jobs:
+  jekyll-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Run the jekyll/builder Docker container to compile your website
+      - name: Build Website inside Jekyll Container
+        run: |
+          docker run \
+          -v ${{ github.workspace }}:/srv/jekyll \
+          -v ${{ github.workspace }}/_site:/srv/jekyll/_site \
+          jekyll/builder:latest /bin/bash -c "chmod 777 /srv/jekyll && jekyll build"
+
+      # 3. Save the built HTML files as a workflow artifact
+      - name: Upload Built Site Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jekyll-static-site
+          path: _site/
