@@ -1,0 +1,14 @@
+# Environment variables
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node (for later, when frontend/dashboard exist)
+node_modules/
+dist/
+
+# OS junk
+.DS_Store
