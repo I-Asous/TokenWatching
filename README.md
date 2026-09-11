@@ -14,7 +14,7 @@ it shows real-time token cost and offers an optimized rewrite of your prompt bef
 | Islam A | Agents & Orchestrator |
 | Maida Kucevic | API & Data Layer (routes, DB, cost calc) |
 | Vincenzo Monterosso | Integration & Infra (CORS, deployment, testing, error handling, user auth) |
-| Alejandro Moya Ramirez | Frontend (extension popup UI/EX) & Data Analysis |
+| Alejandro Moya Ramirez | Frontend (extension popup UI/UX) & Data Analysis |
 
 ---
 
