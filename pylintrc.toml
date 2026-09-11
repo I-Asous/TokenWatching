@@ -1,0 +1,6 @@
+[tool.pylint."messages control"]
+
+# stop the linter from checking for these cases:
+# missing-final-newline: we do not care about this
+# invalid-name: there are preferred naming conventions, but for convinence we don't care
+disable = ["missing-final-newline", "invalid-name"]
