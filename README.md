@@ -105,6 +105,6 @@ token-watching/
 - **Deployment:** Railway/Render (backend), Vercel (dashboard)
   
 - **Future Goals**
- - **Dashboard:** React (Vite), Tailwind, Recharts
+  - **Dashboard:** React (Vite), Tailwind, Recharts
   - **Database:** SQLite (dev) → Postgres (production path)
 ---
