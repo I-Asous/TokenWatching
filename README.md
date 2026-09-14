@@ -106,5 +106,5 @@ token-watching/
   
 - **Future Goals**
  - **Dashboard:** React (Vite), Tailwind, Recharts
- - **Database:** SQLite (dev) → Postgres (production path)
+  - **Database:** SQLite (dev) → Postgres (production path)
 ---
