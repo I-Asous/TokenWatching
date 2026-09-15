@@ -11,7 +11,7 @@ client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 beta_message_tokens_count = client.beta.messages.count_tokens(
     messages=[
         {
-            "content": "Hello, world",
+            "content": "Hello, world how are we doing",
             "role": "user",
         }
     ],
