@@ -1,3 +1,3 @@
-anthropic 
+anthropic==1.6.0
 python-dotenv
-tiktoken
+tiktoken==0.14.0
