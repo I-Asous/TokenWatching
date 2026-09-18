@@ -1,3 +1,4 @@
 anthropic 
 python-dotenv
 tiktoken
+"fastapi[standard]"==0.115.6
