@@ -38,3 +38,4 @@ if __name__ == "__main__":
 
     print("Text:", test3)
     print("Token count:", countTokens(test3))
+    
