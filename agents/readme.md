@@ -31,9 +31,31 @@ Takes a single user-submitted prompt and returns:
 - Cost estimate uses a flat hardcoded rate, needs to connect to `config/pricing.yaml` once that file and `services/cost_calculator.py` exist
 - Token counts are `tiktoken`-based estimates, not exact for Claude models (Anthropic doesn't expose a public tokenizer) — Note. worth stating this explicitly in the final pitch
 - Naming convention is currently a mix of `camelCase` and `snake_case`,  worth standardizing (team decision) before this gets much bigger
-- No test file yet (`tests/test_auditor.py`) — currently only tested manually via the `if __name__ == "__main__":` block
+- **Open bug: token-to-word ratio check over-flags.** `runRuleCheck()` flags any prompt with more than 1 token per word, but normal English averages ~1.3 tokens/word, so almost every prompt gets flagged as "too verbose" (e.g. `"What is the capital of France?"` → 7 tokens / 6 words → flagged). Knock-on effect: nearly every prompt has at least 1 issue, so severity is almost never `Low`. Likely fix is raising the threshold to ~1.5–2 (to be decided). Tracked by an `xfail` test in `tests/test_auditor.py`, which will start failing on purpose once this is fixed, as a reminder to remove the `xfail` marker
+- `llmReview()` isn't covered by tests yet, since it needs an API key and real API calls (would need mocking)
+
+### Tests (`tests/test_auditor.py`)
+Offline unit tests. They need no API key and never call Claude. Run from the repo root with `pytest` (the settings in `pytest.ini` let tests `import auditor` directly).
+| Test | Checks |
+|---|---|
+| `test_countTokens_counts_nonempty_text` | Non-empty text gives > 0 tokens, empty string gives 0 |
+| `test_estimateCost_scales_with_tokens` | Cost is 0 for 0 tokens and scales with token count |
+| `test_runRuleCheck_flags_filler_words_and_blank_lines` | Filler words and `\n\n\n` are both flagged |
+| `test_runRuleCheck_clean_prompt_has_no_issues` | A short, direct prompt has no issues (**expected to fail for now**, see the ratio bug above) |
+| `test_determineSeverity_thresholds` | Low/Medium/High boundaries (300/800 tokens, 1/3 issues) |
 
 
-## Agent 2 — Optimizer (`auditor.py`)
+## Agent 2 — Optimizer (`optimizer.py`)
 
 ### Status: beginning to work on it now(9/23/2026)
+
+
+---
+
+## CI/CD (9/23/2026)
+Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/10 score) with a full pipeline. Details for the agents side:
+- **CI (`.github/workflows/ci.yml`)** runs on every PR and push to `main`: pylint + `pytest` on Python 3.12/3.13/3.14, plus separate jobs for the dashboard (lint + build) and the extension (manifest check + zip packaging)
+- **Pylint gate:** `pylintrc.toml` now sets `fail-under = 8.0`, so CI passes today but fails if code quality drops. Raise this as the existing warnings in `auditor.py` are cleaned up (missing docstrings, trailing whitespace, and the `"""..."""` comment blocks above functions, which pylint flags as `pointless-string-statement`. Moving them *inside* the function as docstrings fixes both)
+- **Dev dependencies:** `pip install -r requirements-dev.txt` installs the runtime deps plus `pylint` and `pytest`
+- **Releases:** bump `version` in `manifest.json`, then push a matching tag (`git tag v1.1 && git push origin v1.1`), and a GitHub Release with the extension zip is created automatically
+

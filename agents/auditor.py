@@ -45,9 +45,10 @@ def runRuleCheck(text: str, token_count: int) -> list[str]:
     issues = []
     word_count = len(text.split())
     
-    if word_count > 0 and (token_count / word_count) > 1:
-        issues.append("High token to word ratio. Possibly too verbose")
+    if word_count > 0 and (token_count / word_count) > 1.6: #chose 1.6 becayse its abit above the token to word ration(1.3). !!! <-- gather data on it
+        issues.append("High token to word ratio. Perhaps too verbose?")
     
+    #Find a dictionary filled with it becayuse too much to write out...
     filler_words = ["please", "thank you", "really", "basically", "essentially", "maybe", "possibly", "just", "hopefully", "somewhat", "amazing", "perfect", "literally", "best"]
     filler_hits = sum(text.lower().count(w) for w in filler_words)
     if filler_hits >= 3:
@@ -128,7 +129,6 @@ def auditPrompt(prompt: str) -> AuditResult:
 
 #Test dummy haha
 if __name__ == "__main__":
-    """
     test1 = "Hi world me llamo islam"
     test2 = "Please PLEASE please could you really kindly help me write a essay about some dragons?"
     test3 = ""
@@ -143,7 +143,6 @@ if __name__ == "__main__":
 
     print("Text:", test3)
     print("Token count:", countTokens(test3))
-    """
     
     """
     sample = "Please, please could you kindly just help me write a short story about a dragon please? I would appreciate it so much!"
