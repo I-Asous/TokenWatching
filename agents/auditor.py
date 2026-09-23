@@ -11,6 +11,7 @@ class AuditResult:
     token_count: int
     estimatedCost: float
     issues: list[str] = field(default_factory = list)
+    severity: str = "Low"
     
 """
 * @brief Counts the number of tokens in a text string
@@ -47,7 +48,7 @@ def runRuleCheck(text: str, token_count: int) -> list[str]:
     if word_count > 0 or (token_count / word_count) > 1:
         issues.append("High token to word ratio. Possibly too verbose")
     
-    filter_words = ["please", "thank you", "really", "basically", "essentially", "maybe", "possibly", "just", "hopefully", "somewhat", "amazing", "perfect", "literally", "best"]
+    filler_words = ["please", "thank you", "really", "basically", "essentially", "maybe", "possibly", "just", "hopefully", "somewhat", "amazing", "perfect", "literally", "best"]
     filler_hits = sum(text.lower().count(w) for w in filler_words)
     if filler_hits >= 3:
         issues.append(f"Too much filler words being used and or unnecessary politeness language ({filler_hits} instances happening)")
@@ -119,7 +120,7 @@ def auditPrompt(prompt: str) -> AuditResult:
 
     return AuditResult(
                         token_count=token_count,
-                        estimated_cost=cost,
+                        estimatedCost=cost,
                         issues=issues,
                         severity=severity,
                         )
