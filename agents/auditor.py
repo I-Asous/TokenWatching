@@ -1,5 +1,5 @@
 import os
-import re
+#import re
 from dataclasses import dataclass, field 
 import tiktoken
 from anthropic import Anthropic
@@ -45,7 +45,7 @@ def runRuleCheck(text: str, token_count: int) -> list[str]:
     issues = []
     word_count = len(text.split())
     
-    if word_count > 0 or (token_count / word_count) > 1:
+    if word_count > 0 and (token_count / word_count) > 1:
         issues.append("High token to word ratio. Possibly too verbose")
     
     filler_words = ["please", "thank you", "really", "basically", "essentially", "maybe", "possibly", "just", "hopefully", "somewhat", "amazing", "perfect", "literally", "best"]
@@ -114,7 +114,7 @@ def auditPrompt(prompt: str) -> AuditResult:
     issues = runRuleCheck(prompt, token_count)
 
     if token_count > 500 and not issues:
-        issues.extend(llm_review(prompt))
+        issues.extend(llmReview(prompt))
 
     severity = determineSeverity(token_count, len(issues))
 
@@ -144,6 +144,11 @@ if __name__ == "__main__":
     print("Text:", test3)
     print("Token count:", countTokens(test3))
     """
+    
+    """
     sample = "Please, please could you kindly just help me write a short story about a dragon please? I would appreciate it so much!"
     result = auditPrompt(sample)
     print(result)
+    """
+    empty_result = auditPrompt("")
+    print(empty_result)
