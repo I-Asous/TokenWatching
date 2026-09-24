@@ -6,11 +6,23 @@ function App() {
       </div>
 
       <div className="Board1">
-      <h1>Login</h1>
+      
+      <h2>Login</h2>
 
       <div className="input-login">
-      <input type="text" name="username-id" placeholder="Username" />
-      <input type="text" name="password-id" placeholder="Password" />
+      
+
+
+        <div className="container">
+          <input type="text" name="username-id" placeholder=" " />
+          <div className="lableLine"> Username </div>
+          </div>
+          
+          <div className="container">
+          <input type="text" name="password-id" placeholder=" " />
+          <div className="lableLine"> Password </div>
+          </div>
+          
       </div>
 
       <div className="buttons">
