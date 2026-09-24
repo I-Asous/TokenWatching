@@ -64,7 +64,7 @@ jobs:
       - name: Validate manifest and package
         run: python scripts/package_extension.py
       - name: Upload extension zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: extension
           path: dist/*.zip
