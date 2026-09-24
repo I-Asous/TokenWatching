@@ -4,3 +4,8 @@
 # missing-final-newline: we do not care about this
 # invalid-name: there are preferred naming conventions, but for convinence we don't care
 disable = ["missing-final-newline", "invalid-name"]
+
+
+[tool.pylint.main]
+# CI fails if the overall score drops below this. Raise it as existing warnings are fixed.
+fail-under = 4.0

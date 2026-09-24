@@ -76,27 +76,53 @@ A lightweight pipeline controller that sequences the agents, passes state betwee
 ## Project Structure
  
 ```
-token-watching/
-├── extension/          # Chrome extension (Manifest V3)
-│   ├── content-scripts/  # Detects prompts on ChatGPT/Claude.ai
-│   ├── background/       # Service worker — talks to backend
-│   ├── popup/             # Extension popup UI (React)
-│   └── options/           # Settings (API key, model selection)
+TokenWatching/
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml            # Lint, tests, dashboard build, extension packaging (PRs + main)
+│   │   └── release.yml       # Tag v* → validates version, publishes GitHub Release with extension zip
+│   └── dependabot.yml        # Weekly dependency update PRs (pip, npm, Actions)
 │
-├── backend/             # FastAPI app
-│   ├── orchestrator.py    # Pipeline controller
-│   ├── agents/             # Auditor, Optimizer, Validator
-│   ├── routes/             # /analyze, /history, /stats
-│   ├── models/             # DB schema + Pydantic models
-│   └── services/           # Token counting, cost calculation
+├── agents/                   # Agent pipeline (Python)
+│   ├── auditor.py            # Agent 1: token count, cost estimate, waste issues, severity
+│   ├── optimizer.py          # Agent 2: prompt rewriting (in progress)
+│   ├── testing_agent.py      # Scratch script for testing the Anthropic API connection
+│   └── readme.md             # Agents progress log (decisions, bugs, fixes)
 │
-├── dashboard/           # Web app — analytics/history view
+├── tests/
+│   └── test_auditor.py       # Offline unit tests for the Auditor (no API key needed)
+│
+├── scripts/
+│   └── package_extension.py  # Validates manifest.json and zips the extension files
+│
+├── config/
+│   └── prices.yaml           # Model pricing (to be wired into cost estimates)
+│
+├── dashboard/                # Web dashboard: React + TypeScript (Vite), Clerk auth
 │   └── src/
 │
+├── manifest.json             # Chrome extension manifest (MV3)
+├── hello.html                # Extension popup (placeholder)
+├── hello_extensions.png      # Extension icon
+│
+├── requirements.txt          # Runtime Python deps
+├── requirements-dev.txt      # + pylint, pytest
+├── pylintrc.toml             # Pylint config (CI fails below fail-under score)
+├── pytest.ini                # Pytest config (tests import from agents/)
 └── README.md
 ```
  
----
+## Dependency Updates (Dependabot)
+ 
+[Dependabot](https://docs.github.com/en/code-security/dependabot) checks weekly for newer versions of our dependencies and opens a PR for each update, including release notes. CI runs on these PRs like any other, so a breaking upgrade shows up before it's merged.
+ 
+| Ecosystem | Directory | Notes |
+|---|---|---|
+| pip | `/` | Python packages in `requirements*.txt` |
+| npm | `/dashboard` | All dashboard updates grouped into a single `dashboard-deps` PR |
+| GitHub Actions | `/` | Action versions in `.github/workflows/` (e.g. `actions/checkout`) |
+ 
+Configured in [`.github/dependabot.yml`](.github/dependabot.yml). Review and merge these PRs like any other. Staying current keeps us off versions with known vulnerabilities and avoids a large catch-up upgrade later.
  
 ## Tech Stack
  

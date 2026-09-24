@@ -1,0 +1,33 @@
+{
+  "name": "tokenwatching",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "**Real-time prompt cost optimization, built into the everyday tools you already use.**",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/I-Asous/TokenWatching.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/I-Asous/TokenWatching/issues"
+  },
+  "homepage": "https://github.com/I-Asous/TokenWatching#readme",
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.3.5"
+  }
+}

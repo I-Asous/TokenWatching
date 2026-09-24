@@ -3,8 +3,14 @@
     "description": "Base Level Extension",
     "version": "1.0",
     "manifest_version": 3,
+    "permissions":["activeTab"],
     "action": {
-      "default_popup": "hello.html",
-      "default_icon": "hello_extensions.png"
-    }
+      "default_popup": "index.html",
+      "default_icon": "Token_Watching_Logo.png"},
+    "content_scripts":[
+      {
+        "matches": ["https://chatgpt.com/*"],
+        "js": ["content.ts"]
+      }
+    ]
   }

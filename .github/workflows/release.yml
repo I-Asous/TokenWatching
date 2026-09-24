@@ -1,0 +1,25 @@
+name: Release
+
+# Bump "version" in manifest.json, then push a matching tag:
+#   git tag v1.1 && git push origin v1.1
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Validate tag matches manifest and package
+        run: python scripts/package_extension.py --check-version "${{ github.ref_name }}"
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/*.zip --generate-notes --verify-tag
