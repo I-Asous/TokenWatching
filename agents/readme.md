@@ -14,6 +14,9 @@ Takes a single user-submitted prompt and returns:
 - Estimated dollar cost (placeholder flat rate — will connect to `pricing.yaml` once `config/` is created)
 - A list of flagged waste issues (rule-based checks, escalates to an LLM review only when the prompt is long and no rule-based issues were actually found)
 - A severity rating (`Low` / `Medium` / `High`)
+
+### To test: pytest tests/test_auditor.py -v
+
 ### Design decisions
 - **Tiered analysis (rule-based first, LLM only when needed):** since Agent 1's whole job is flagging wasted tokens, it shouldn't itself waste tokens doing so itself. Cheaper, deterministic checks run first (token-to-word ratio, filler word count, excessive blank lines). The LLM review only fires if the prompt is long (> 500 tokens) and none of the rule-based checks caught anything ie there might be subtler issues.
 - **Plain functions, not a class:** originally tried wrapping everything in a `@dataclass class Auditor` with methods... reverted this. None of the functions need shared state (so no `self.something` is used across calls), thus plain top-level functions are simpler and match how the orchestrator will call this file later (`from agents.auditor import auditPrompt`).
@@ -31,7 +34,7 @@ Takes a single user-submitted prompt and returns:
 - Cost estimate uses a flat hardcoded rate, needs to connect to `config/pricing.yaml` once that file and `services/cost_calculator.py` exist
 - Token counts are `tiktoken`-based estimates, not exact for Claude models (Anthropic doesn't expose a public tokenizer) — Note. worth stating this explicitly in the final pitch
 - Naming convention is currently a mix of `camelCase` and `snake_case`,  worth standardizing (team decision) before this gets much bigger
-- **Open bug: token-to-word ratio check over-flags.** `runRuleCheck()` flags any prompt with more than 1 token per word, but normal English averages ~1.3 tokens/word, so almost every prompt gets flagged as "too verbose" (e.g. `"What is the capital of France?"` → 7 tokens / 6 words → flagged). Knock-on effect: nearly every prompt has at least 1 issue, so severity is almost never `Low`. Likely fix is raising the threshold to ~1.5–2 (to be decided). Tracked by an `xfail` test in `tests/test_auditor.py`, which will start failing on purpose once this is fixed, as a reminder to remove the `xfail` marker
+- ~~Open bug: token-to-word ratio check over-flags~~ **Fixed.** The threshold was `> 1`, but normal English averages ~1.3 tokens/word, so almost every prompt got flagged (e.g. `"What is the capital of France?"` → 7 tokens / 6 words → flagged), and severity was almost never `Low`. Raised it to `> 1.6` (a bit above the ~1.3 average) and removed the `xfail` marker from the clean-prompt test. 1.6 is still a guess, so it's worth gathering real prompt data to tune it
 - `llmReview()` isn't covered by tests yet, since it needs an API key and real API calls (would need mocking)
 
 ### Tests (`tests/test_auditor.py`)
@@ -41,16 +44,10 @@ Offline unit tests. They need no API key and never call Claude. Run from the rep
 | `test_countTokens_counts_nonempty_text` | Non-empty text gives > 0 tokens, empty string gives 0 |
 | `test_estimateCost_scales_with_tokens` | Cost is 0 for 0 tokens and scales with token count |
 | `test_runRuleCheck_flags_filler_words_and_blank_lines` | Filler words and `\n\n\n` are both flagged |
-| `test_runRuleCheck_clean_prompt_has_no_issues` | A short, direct prompt has no issues (**expected to fail for now**, see the ratio bug above) |
+| `test_flags_excessive_blank_lines` | 2 newlines in a row are fine, 3+ get flagged |
+| `test_runRuleCheck_clean_prompt_has_no_issues` | A short, direct prompt has no issues (passes now that the ratio bug is fixed) |
 | `test_determineSeverity_thresholds` | Low/Medium/High boundaries (300/800 tokens, 1/3 issues) |
 
-
-## Agent 2 — Optimizer (`optimizer.py`)
-
-### Status: beginning to work on it now(9/23/2026)
-
-
----
 
 ## CI/CD (9/23/2026)
 Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/10 score) with a full pipeline. Details for the agents side:
@@ -59,3 +56,123 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 - **Dev dependencies:** `pip install -r requirements-dev.txt` installs the runtime deps plus `pylint` and `pytest`
 - **Releases:** bump `version` in `manifest.json`, then push a matching tag (`git tag v1.1 && git push origin v1.1`), and a GitHub Release with the extension zip is created automatically
 
+
+## Agent 2 — Optimizer (`optimizer.py`)
+
+### Status: Core logic working, not wired into the orchestrator yet (9/24/2026)
+
+### What it does
+Takes a prompt (plus, optionally, the issues Agent 1 flagged) and returns an `OptimizationResult` with:
+- The original and rewritten prompt
+- Token counts for both (same `tiktoken` `cl100k_base` encoding as Agent 1, so the numbers are comparable)
+- Tokens saved and percent saved
+
+### To test: pytest tests/test_optimizer.py -v
+
+`formatComparisonTable()` turns that result into a side-by-side table for the terminal/demo.
+
+### Example
+```python
+from agents.auditor import auditPrompt
+from agents.optimizer import optimizePrompt, formatComparisonTable
+
+prompt = ("Please, could you kindly help me write a short story? I would really "
+          "appreciate it if you could make it about a dragon. Thank you so much!")
+
+audit = auditPrompt(prompt)                       # Agent 1
+result = optimizePrompt(prompt, audit.issues)     # Agent 2 (calls Claude)
+print(formatComparisonTable(result))
+```
+Output:
+```
++-----------+--------------------------------------------------+--------+----------------+
+|           | Prompt                                           | Tokens | Cost / 1K Runs |
++-----------+--------------------------------------------------+--------+----------------+
+| Original  | Please, could you kindly help me write a short   | 31     | $0.093         |
+|           | story? I would really appreciate it if you could |        |                |
+|           | make it about a dragon. Thank you so much!       |        |                |
++-----------+--------------------------------------------------+--------+----------------+
+| Optimized | Write a short story about a dragon.              | 8      | $0.024         |
++-----------+--------------------------------------------------+--------+----------------+
+| Saved     | 74.19%                                           | 23     | $0.069         |
++-----------+--------------------------------------------------+--------+----------------+
+```
+
+### Design decisions
+- **Agent 1's issues are passed into the rewrite:** `buildUserMessage()` lists them above the prompt ("Known issues found in prompt: ..."), so the LLM targets the actual problems instead of guessing. If there are no issues, the message is just the delimited prompt.
+- **System prompt keeps meaning over length:** it removes filler and repetition but is told to keep examples, format requirements, constraints and edge cases, and to return an already-concise prompt unchanged. A shorter prompt that gives worse output isn't a saving.
+- **One before/after example in the system prompt:** shows the model the expected style of rewrite without adding many tokens.
+- **Same structure as Agent 1:** plain functions plus a data-only `OptimizationResult` dataclass, so the orchestrator can call `optimizePrompt()` the same way it calls `auditPrompt()`.
+- **Reuses `estimateCost()` from Agent 1** for the table, instead of a second copy of the rate.
+
+### Challenges + fixes
+| Challenge | Cause | Fix |
+|---|---|---|
+| Cost column always showed `$0.000` | A single prompt costs a fraction of a cent, and `estimateCost()` rounds to 3 decimals | Table shows **cost per 1,000 runs** instead, which is also closer to how real apps pay (same prompt, many calls) |
+| Negative "savings" | The LLM can return a rewrite that's *longer* than the original (e.g. for an already short prompt) | `tokensSaved = max(original - optimized, 0)`, so savings are never negative |
+| `ZeroDivisionError` on empty prompt | `percentSaved` divides by `originalTokens` | Returns `0.0` when `originalTokens` is 0 (same kind of bug as the one in Agent 1) |
+| Long prompts broke the table layout | A 500-word prompt made one very wide row | `textwrap` wraps the prompt column (default 50 chars); other cells are padded so every line has the same width |
+| Testing without an API key / without spending tokens | `callOptimizerLLM()` makes a real Claude call | Tests swap the module's `client` for a fake one with `monkeypatch`. The fake records the request and returns a set reply, so we can check both what gets sent and how the result is handled |
+
+### Known limitations / things to revisit
+- Model is hardcoded (`claude-sonnet-4-6`), should move to config along with pricing
+- No check that the LLM actually followed the rules. If it adds a preamble ("Here's your optimized prompt: ...") or drops a constraint, we'd still return it
+- If the rewrite is longer, we report 0% saved but still return the longer prompt, when the original should be returned instead
+- Same `tiktoken` estimate caveat as Agent 1
+- Cost still uses Agent 1's flat placeholder rate
+
+### Tests (`tests/test_optimizer.py`)
+Offline, no API key needed (uses the fake client described above).
+| Test | Checks |
+|---|---|
+| `test_countTokens_counts_nonempty_text` | Non-empty text gives > 0 tokens, empty string gives 0 |
+| `test_buildUserMessage_without_issues` | No issues → message is just `PROMPT TO OPTIMIZE:\n<prompt>` |
+| `test_buildUserMessage_with_issues` | Issues are listed as bullets before the prompt |
+| `test_callOptimizerLLM_sends_system_prompt_and_strips` | The system prompt and issues are sent, and whitespace is stripped from the reply |
+| `test_optimizePrompt_computes_savings` | Token counts, tokens saved and percent saved are correct |
+| `test_optimizePrompt_never_negative` | A longer rewrite gives 0 saved, not a negative number |
+| `test_optimizePrompt_empty_prompt` | Empty prompt doesn't divide by zero |
+| `test_optimizePrompt_default_issues` | `issues` defaults to an empty list |
+| `test_formatComparisonTable_contains_prompts_and_counts` | Both prompts, counts, percent and headers are in the table |
+| `test_formatComparisonTable_wraps_long_prompts` | Long prompts wrap and every line has the same width |
+
+Current result: `16 passed` across both test files.
+
+---
+
+## Next steps (with examples)
+
+**1. Return the original when the rewrite isn't shorter.** Right now a longer rewrite still gets returned:
+```python
+if optimizedTokens >= originalTokens:
+    optimizedPrompt, optimizedTokens = prompt, originalTokens
+```
+
+**2. Check the rewrite before returning it.** Catch the model breaking the "only return the prompt" rule, e.g.:
+```python
+if optimizedPrompt.lower().startswith(("here's", "here is", "optimized prompt")):
+    ...  # retry once, or fall back to the original
+```
+
+**3. Create `config/pricing.yaml` + `services/cost_calculator.py`** so both agents use real per-model rates instead of the placeholder:
+```yaml
+claude-sonnet-4-6:
+  input_per_million: 3.00
+  output_per_million: 15.00
+```
+
+**4. Use exact Claude token counts where possible.** `testing_agent.py` already tries the API's token-counting endpoint, which could replace the `tiktoken` estimate (costs an API call, so maybe only for the final numbers):
+```python
+client.messages.count_tokens(model=MODEL, messages=[{"role": "user", "content": prompt}]).input_tokens
+```
+
+**5. Orchestrator:** one function that runs Agent 1 → Agent 2 and skips the LLM rewrite when there's nothing to fix (same "don't waste tokens to save tokens" idea as Agent 1):
+```python
+def run(prompt):
+    audit = auditPrompt(prompt)
+    if not audit.issues and audit.severity == "Low":
+        return audit, None
+    return audit, optimizePrompt(prompt, audit.issues)
+```
+
+**6. Cleanup (team decisions):** pick one naming convention (camelCase vs snake_case), move the `"""..."""` blocks above functions into docstrings to raise the pylint score, then bump `fail-under` above 8.0.
