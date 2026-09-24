@@ -112,6 +112,18 @@ TokenWatching/
 └── README.md
 ```
  
+## Dependency Updates (Dependabot)
+ 
+[Dependabot](https://docs.github.com/en/code-security/dependabot) checks weekly for newer versions of our dependencies and opens a PR for each update, including release notes. CI runs on these PRs like any other, so a breaking upgrade shows up before it's merged.
+ 
+| Ecosystem | Directory | Notes |
+|---|---|---|
+| pip | `/` | Python packages in `requirements*.txt` |
+| npm | `/dashboard` | All dashboard updates grouped into a single `dashboard-deps` PR |
+| GitHub Actions | `/` | Action versions in `.github/workflows/` (e.g. `actions/checkout`) |
+ 
+Configured in [`.github/dependabot.yml`](.github/dependabot.yml). Review and merge these PRs like any other. Staying current keeps us off versions with known vulnerabilities and avoids a large catch-up upgrade later.
+ 
 ## Tech Stack
  
 - **Backend:** FastAPI (Python), `tiktoken`, Anthropic/OpenAI SDK
