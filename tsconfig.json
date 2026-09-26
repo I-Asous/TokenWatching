@@ -10,7 +10,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "esnext",
-    "types": [],
+    "types": ["chrome"],
     // For nodejs:
     // "lib": ["esnext"],
     // "types": ["node"],
