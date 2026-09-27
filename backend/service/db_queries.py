@@ -136,7 +136,7 @@ def delete_prompt(prompt_id):
    try:
       # insert into database
       response = (
-         supabase.table("users")
+         supabase.table("prompt")
          .delete()
          .eq("id", prompt_id)
          .execute()
