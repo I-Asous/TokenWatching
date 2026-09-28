@@ -1,6 +1,6 @@
 from fastapi import HTTPException, APIRouter
  
-import service.db_queries as db
+import repository.db_queries as db
 
 router = APIRouter()
  
