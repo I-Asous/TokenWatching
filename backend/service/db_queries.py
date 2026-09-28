@@ -6,7 +6,10 @@
 # so we have this solution to be able to change stuff. woohoo!
 
 import os
+from dotenv import load_dotenv
 from supabase import create_client, Client
+
+load_dotenv()
 
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
@@ -24,7 +27,8 @@ def get_user_input_prompts(user_id):
 
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
-      return response.data[0]
+      # AND HANDLE ONLY 1 PROMPT VS MULTIPLE
+      return response.data
       
    # double check this later to see if this exception is the correct one!
    except Exception as e:

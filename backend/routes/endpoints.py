@@ -1,12 +1,13 @@
-from fastapi import HTTPException
-from main import app
+from fastapi import HTTPException, APIRouter
  
 import service.db_queries as db
+
+router = APIRouter()
  
 ## GET
 
 # return a specific users original prompts
-@app.get("/users/{user_id}/prompts")
+@router.get("/users/{user_id}/prompts")
 def read_user_prompts(user_id):
     try:
         return db.get_user_input_prompts(user_id)
@@ -15,7 +16,7 @@ def read_user_prompts(user_id):
         raise HTTPException(status_code=500, detail=str(e))
  
 # return a specific users optimized prompts
-@app.get("/users/{user_id}/optimized-prompts")
+@router.get("/users/{user_id}/optimized-prompts")
 def read_user_optimized_prompts(user_id):
     try:
         return db.get_user_optimized_prompts(user_id)
@@ -23,7 +24,7 @@ def read_user_optimized_prompts(user_id):
         raise HTTPException(status_code=500, detail=str(e))
  
 # return specific users org prompt+optimized prompt
-@app.get("/users/{user_id}/prompts-with-optimized")
+@router.get("/users/{user_id}/prompts-with-optimized")
 def read_user_prompts_with_optimized(user_id):
     try:
         return db.get_user_input_and_optimized_prompts(user_id)
@@ -31,7 +32,7 @@ def read_user_prompts_with_optimized(user_id):
         raise HTTPException(status_code=500, detail=str(e))
  
 # return a specific users 1 prompt + optimized version of it
-@app.get("/users/{user_id}/prompts/{prompt_id}")
+@router.get("/users/{user_id}/prompts/{prompt_id}")
 def read_user_prompt_with_optimized(user_id, prompt_id):
     try:
         result = db.get_user_prompt_w_optimized(user_id, prompt_id)
@@ -45,7 +46,7 @@ def read_user_prompt_with_optimized(user_id, prompt_id):
 ## POST
    
 # user submits a prompt
-@app.post("/prompt")
+@router.post("/prompt")
 def create_prompt(prompt):
     try:
         return db.create_prompt(prompt)
@@ -54,7 +55,7 @@ def create_prompt(prompt):
  
 # optimized prompt from frontend gets send back to backend
 # ensure if we need put keeping just in case
-@app.post("/optimized-prompts")
+@router.post("/optimized-prompts")
 def create_optimized_prompt(prompt):
     try:
         return db.create_optimized_prompt(prompt)
@@ -65,7 +66,7 @@ def create_optimized_prompt(prompt):
 # DELETE
  
 # delete a user
-@app.delete("/users/{user_id}")
+@router.delete("/users/{user_id}")
 def remove_user(user_id):
     try:
         return db.delete_user(user_id)
@@ -73,7 +74,7 @@ def remove_user(user_id):
         raise HTTPException(status_code=500, detail=str(e))
  
 # delete a prompt
-@app.delete("/prompts/{prompt_id}")
+@router.delete("/prompts/{prompt_id}")
 def remove_prompt(prompt_id):
     try:
         return db.delete_prompt(prompt_id)
@@ -84,7 +85,7 @@ def remove_prompt(prompt_id):
 # UPDATE!!
  
 # user updates information
-@app.put("/users/{user_id}")
+@router.put("/users/{user_id}")
 def modify_user(user_id, user):
     try:
         return db.update_user(user, user_id)
