@@ -20,11 +20,23 @@ h1{
   color: #E6D9E2;
   text-align: center;
 }
+
 h2{
   margin-top: 10px;
   margin-bottom: 10px;
   font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
-  font-size: 30px;
+  font-size: 25px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #E6D9E2;
+  text-align: center;
+}
+
+h4{
+  margin-top: 10px;
+  margin-bottom: 10px;
+  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  font-size: 15px;
   font-weight: bold;
   text-transform: uppercase;
   color: #E6D9E2;
@@ -77,7 +89,6 @@ input:valid {
   border: 2px solid #E6D9E2;
 }
 
-/* Changed input:valid to input:not(:placeholder-shown) */
 input:focus + .lableLine,
 input:not(:placeholder-shown) + .lableLine {
   color: #E6D9E2;
@@ -114,5 +125,50 @@ button{
   background-color: #E6D9E2;
   color: #4B3A30;
   border-radius: 10px;
+}
+
+.promptext{
+  width: 90%;
+  min-height: 3em;     
+  max-height: 8em;
+  field-sizing: content;
+  resize: none;
+  background-color: #4B3A30;
+  color: #E6D9E2;
+  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+}
+.navbar {
+  display: flex;
+  gap: 4px;
+  background: #85A08F;          
+  margin-bottom: 12px;
+  border-radius: 10px;
+}
+
+.nav-item {
+  flex: 1;
+  padding: 8px 12px;
+  background: #85A08F;          
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  color: white;
+  transition: background 0.15s ease;
+    border-radius: 10px;
+  
+}
+
+.nav-item:hover {
+  background: #14532d;          
+}
+
+.nav-item:active {
+  background: #0f3d21;          
+}
+
+.nav-item.active {
+  background: #1b7a3a;         
+  border-bottom-color: white;
+  font-weight: 600;
 }
 

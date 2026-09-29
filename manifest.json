@@ -9,8 +9,8 @@
       "default_icon": "Token_Watching_Logo.png"},
     "content_scripts":[
       {
-        "matches": ["https://chatgpt.com/*"],
-        "js": ["content.ts"]
+"matches": ["https://chat.openai.com/*", "https://chatgpt.com/*"],
+    "js": ["content.ts"]
       }
     ]
   }
