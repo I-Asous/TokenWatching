@@ -27,14 +27,13 @@ Score should be based on the following scale:
 
 9-10: Optimized prompt is functionally identical in intent and requirements.
 
-7-8.99:
+6-8.99: Minor phrasing differences, but intent and requirements are fully preserved.
 
-5-6.99:
+3-5.99: Some meaningful loss — a constraint, example, or nuance was dropped or changed.
 
-3-4.99:
+1-2.99: The optimized prompt would likely produce a meaningfully different or worse result.
 
-1-2.99:
+0: The optimized prompt has no correlation, will most likely produce a worse result.
 
-0:
-
+PASSED should be "yes" only if the score is 6 or higher. Be strict — a shorter prompt that changes meaning is a failure, even if it saves tokens.
 """
