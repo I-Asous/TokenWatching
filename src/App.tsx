@@ -10,6 +10,11 @@ function App() {
         <h1>Token Watching</h1>
       </div>
 
+      <Navbar active={tab} onChange={setTab} />
+
+      {tab === 'stats' && <Stats />}
+      {tab === 'prompt' && <Chatbox />}
+      {tab === 'history' && <History />}
       <Show when="signed-out">
         <div className="Board1">
           {mode === 'sign-in' ? <SignIn routing="hash" /> : <SignUp routing="hash" />}
