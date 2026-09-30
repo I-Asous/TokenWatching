@@ -14,29 +14,30 @@ class ValidationResult:
     reasoning: str
     reactTrace: str = ""
 
-VALIDATOR_SYSTEM_PROMPT = """You are a prompt-quality validator. You will be given an ORIGINAL prompt and an 
-OPTIMIZED version of it. Your job is to judge whether the optimized version still preserves the original's 
-intent, meaning, and any explicit requirements (format, constraints, edge cases). 
-
-Respond in the exact way:
-SCORE: <float 0-10>
-PASSED: <Yes or No>
-REASON: <one sentence reason justifying your response>
-
-
-Score should be based on the following scale:
-
-9-10: Optimized prompt is functionally identical in intent and requirements.
+# System prompt structured around the ReAcT framework (Read, Answer, Cite, Think 
+# From NYIT's prompt-engineering frameworks guide:
+# https://libguides.nyit.edu/promptengineering/promptframeworks)
+VALIDATOR_SYSTEM_PROMPT = """You are a prompt-quality validator. You will be given an ORIGINAL prompt and an OPTIMIZED (shortened) version of it. Your job is to judge whether the optimized version still preserves the original's intent, meaning, and any explicit requirements (format, constraints, edge cases).
  
-6-8.99: Minor phrasing differences, but intent and requirements are fully preserved.
+Work through the ReAcT framework, in order, labeling each step. Do not skip a step or merge them together:
  
-3-5.99: Some meaningful loss — a constraint, example, or nuance was dropped or changed.
+READ: Restate, in your own words, every distinct requirement in the ORIGINAL prompt -- intent, tone, format, constraints, edge cases, and any examples. List them as short bullet points.
+ANSWER: For each requirement listed in READ, state plainly whether the OPTIMIZED prompt still satisfies it (yes / no / weakened).
+CITE: For every requirement you marked "no" or "weakened", quote the exact phrase from the ORIGINAL that establishes it, and note what (if anything) replaced it in the OPTIMIZED version. If everything was preserved, write "No losses to cite."
+THINK: Reason about whether any drop or change identified above would actually change the model's output in practice, versus being a harmless phrasing difference.
  
-1-2.99: The optimized prompt would likely produce a meaningfully different or worse result.
+Then, after THINK, end your reply with exactly these three lines and nothing after them:
+SCORE: <integer 1-10>
+PASSED: <yes or no>
+REASON: <one short sentence explaining the score, grounded in what you found in CITE/THINK>
  
-0-0.99: The optimized prompt has no correlation, will most likely produce a worse result.
-
-PASSED should be "yes" only if the score is 6 or higher. Be strict — a shorter prompt that changes meaning is a failure, even if it saves tokens.
+Scoring guide:
+- 9-10: Optimized prompt is functionally identical in intent and requirements.
+- 6-8: Minor phrasing differences, but intent and requirements are fully preserved.
+- 3-5: Some meaningful loss — a constraint, example, or nuance was dropped or changed.
+- 1-2: The optimized prompt would likely produce a meaningfully different or worse result.
+ 
+PASSED should be "yes" only if the score is 6 or higher. Be strict — a shorter prompt that changes meaning is a failure, even if it saves tokens. Base the score only on what you actually found in READ/ANSWER/CITE/THINK, not on a general impression.
 """
 
 """
@@ -63,7 +64,7 @@ def buildUserMessage(originalPrompt: str, optimizedPrompt: str) -> str:
 * 4. A tuple of (score, passed, reason, reactTrace) is returned.
 """
 def parseValidatorReply(reply: str) -> tuple[float, bool, str, str]:
-    score = 0
+    score = 1
     passed = False
     reason = "Could not parse Agent 3, Validator, response."
     reply = reply.strip()
@@ -140,9 +141,12 @@ def validatePrompt(originalPrompt: str, optimizedPrompt: str) -> ValidationResul
     )
  
 if __name__ == "__main__":
-    
+    """
     original = "Please, could you kindly help me write a short story about a dragon? Thank you so much!"
     optimized = "Write a short story about a dragon."
+    """
+    original = "Write an article about social media"
+    optimized = "Write a 500-word article about social media and teen mental health. Use a friendly tone and include three bulleted tips for parents."
     
     result = validatePrompt(original, optimized)
  
