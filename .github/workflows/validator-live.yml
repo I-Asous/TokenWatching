@@ -1,0 +1,46 @@
+name: Validator (live)
+
+# Runs the validator against the real Claude API to catch prompt/model regressions.
+# Kept out of PR CI so it doesn't spend tokens on every push.
+# Requires the ANTHROPIC_API_KEY repository secret.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - agents/validator.py
+      - tests/test_validator_live.py
+
+concurrency:
+  group: validator-live-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Live validator checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Check API key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is not set"
+            exit 1
+          fi
+      - name: Live tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: pytest -v -m live

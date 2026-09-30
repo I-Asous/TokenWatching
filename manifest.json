@@ -3,7 +3,12 @@
     "description": "Base Level Extension",
     "version": "1.0",
     "manifest_version": 3,
-    "permissions":["activeTab"],
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnnPYAbPeM3595psZ8SCIV55WXhQcfuyLjW6B9a8mZC3np225aX+aYnhh/JN+9ocanuUVibWCfK4Ru2zLA8KJCJ7ZKKBap79KB1pRFn5Myku4hHiM2gDRbEw5ONj3Cr/CXLF9IxV7VaEZAx8wPoUUiq1QrjNHJ9c5u8sSmlpUUnljkOAvtLh308rCVnDvYsIsZLVXPpuB3akVDY0PmTrt2JCQa1NqPCF3qs5dZytleAzN60axA50hx+oniYStH586KH2J+Mtc2LhVsgeHlJ5sZc4sGYimxKlHQHUyags86+ly21ceNSdrKRK/0w5U5942xx5H1rVmqBtiDZCTSj231wIDAQAB",
+    "permissions": ["activeTab", "cookies", "storage"],
+    "host_permissions": [
+      "https://united-skylark-6420.clerk.accounts.dev/*",
+      "http://localhost:5173/*"
+    ],
     "action": {
       "default_popup": "index.html",
       "default_icon": "Token_Watching_Logo.png"},

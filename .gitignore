@@ -1,6 +1,9 @@
 # Environment variables
 .env
 
+# Chrome extension signing key (keeps the extension ID stable)
+.secrets/
+
 # Python
 venv/
 __pycache__/
