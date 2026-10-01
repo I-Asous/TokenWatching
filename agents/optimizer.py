@@ -3,7 +3,7 @@ import textwrap
 from dataclasses import dataclass
 import tiktoken
 from anthropic import Anthropic
-from agents.auditor import estimateCost
+from auditor import estimateCost
  
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
