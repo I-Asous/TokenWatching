@@ -1,9 +1,9 @@
 import os
 from dataclasses import dataclass, field
  
-from auditor import auditPrompt, AuditResult
-from optimizer import optimizePrompt, OptimizationResult
-from validator import validatePrompt, ValidationResult
+from agents.auditor import auditPrompt, AuditResult
+from agents.optimizer import optimizePrompt, OptimizationResult
+from agents.validator import validatePrompt, ValidationResult
 
 MAX_OPTIMIZATION_ATTEMPTS = 3 #Is three too little? too much? idk come back to it
 
@@ -36,10 +36,11 @@ class OrchestrationResult:
 *    MAX_OPTIMIZATION_ATTEMPTS total attempts) with the Validator's
 *    reasoning fed back in, so each retry knows specifically what the
 *    last attempt broke instead of repeating the same mistake.
-* 6. If no attempt passes, the original prompt is returned unchanged,
+* 6. If a rewrite saves no tokens, the loop stops without validating it.
+* 7. If no attempt passes, the original prompt is returned unchanged,
 *    a rewrite the Validator rejected is never sent, even if it would
 *    have saved tokens.
-* 7. An OrchestrationResult capturing every attempt, the audit findings,
+* 8. An OrchestrationResult capturing every attempt, the audit findings,
 *    and the final token/cost savings (if any) is returned.
 """
 def runPipeline(prompt: str) -> OrchestrationResult:
@@ -58,6 +59,11 @@ def runPipeline(prompt: str) -> OrchestrationResult:
  
     for attemptNumber in range(1, MAX_OPTIMIZATION_ATTEMPTS + 1):
         optimizationResult = optimizePrompt(prompt, issues)
+
+        #A rewrite that saves nothing (unchanged or longer) isn't worth a Validator call or a retry
+        if optimizationResult.tokensSaved == 0:
+            break
+
         validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
         attempts.append(validationResult)
  
