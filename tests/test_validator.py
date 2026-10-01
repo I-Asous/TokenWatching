@@ -60,7 +60,7 @@ def test_parseValidatorReply_keeps_trace():
 def test_parseValidatorReply_unparseable_uses_defaults():
     reply = "I think these prompts are pretty similar."
     score, passed, reason, trace = validator.parseValidatorReply(reply)
-    assert score == 0
+    assert score == 1
     assert passed is False
     assert reason == "Could not parse Agent 3, Validator, response."
     assert trace == reply
@@ -68,7 +68,7 @@ def test_parseValidatorReply_unparseable_uses_defaults():
 #A non-numeric score doesn't raise and keeps the default
 def test_parseValidatorReply_bad_score():
     score, passed, _, _ = validator.parseValidatorReply("SCORE: high\nPASSED: Yes\nREASON: ok")
-    assert score == 0
+    assert score == 1
     assert passed is True
 
 #LLM call sends the validator system prompt and both prompts

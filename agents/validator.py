@@ -98,7 +98,7 @@ def parseValidatorReply(reply: str) -> tuple[float, bool, str, str]:
 def callValidatorLLM(originalPrompt: str, optimizedPrompt: str) -> tuple[float, bool, str, str]:
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=300,
+        max_tokens=1024,
         system=VALIDATOR_SYSTEM_PROMPT,
         messages=[{
             "role": "user",
