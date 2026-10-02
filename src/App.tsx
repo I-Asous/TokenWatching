@@ -1,16 +1,21 @@
 import { useState } from 'react';
+import Chatbox from './pages/Chatbox';
+import History from './pages/History';
+import Stats from './pages/Stats';
+import Navbar, { type Tab } from './components/Navbar';
 import { Show, SignIn, SignUp, UserButton } from '@clerk/chrome-extension';
 
 
 function App() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [tab, setTab] = useState<Tab>('prompt');
 
   return (
     <>
       <div className="Logo">
         <h1>Token Watching</h1>
       </div>
-
+    
       <Navbar active={tab} onChange={setTab} />
 
       {tab === 'stats' && <Stats />}
