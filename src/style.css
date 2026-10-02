@@ -33,7 +33,7 @@ h2{
 }
 
 h4{
-  margin-top: 10px;
+  margin-top: 20px;
   margin-bottom: 10px;
   font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
   font-size: 15px;
@@ -136,6 +136,8 @@ button{
   background-color: #4B3A30;
   color: #E6D9E2;
   font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  padding-bottom: 20px;
+  margin-bottom: 30px;
 }
 .navbar {
   display: flex;
@@ -154,7 +156,7 @@ button{
   cursor: pointer;
   color: white;
   transition: background 0.15s ease;
-    border-radius: 10px;
+  border-radius: 10px;
   
 }
 
@@ -172,3 +174,23 @@ button{
   font-weight: 600;
 }
 
+.enter{
+  padding-top: 30px;
+  padding-bottom: 5px;
+}
+.boardContainer{
+  display: flex;             /* Places children side-by-side */
+  justify-content: center;   /* Centers them horizontally */
+  align-items: center;       /* Centers them vertically */
+  gap: 10px;                 /* Adds spacing between the two doughnuts */
+}
+.board2{
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: transparent;
+  border-radius: 10px;
+  width: 150px;
+  height: 150px;
+  margin-left: 5px;
+}

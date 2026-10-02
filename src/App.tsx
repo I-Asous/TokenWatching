@@ -5,6 +5,7 @@ import History from './pages/History';
 import Stats from './pages/Stats';
 import Navbar, { type Tab } from './components/Navbar';
 
+
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [tab, setTab] = useState<Tab>('prompt');
