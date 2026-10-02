@@ -79,37 +79,59 @@ A lightweight pipeline controller that sequences the agents, passes state betwee
 TokenWatching/
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml            # Lint, tests, dashboard build, extension packaging (PRs + main)
-│   │   └── release.yml       # Tag v* → validates version, publishes GitHub Release with extension zip
-│   └── dependabot.yml        # Weekly dependency update PRs (pip, npm, Actions)
+│   │   ├── ci.yml              # Lint, tests, dashboard build, extension packaging (PRs + main)
+│   │   ├── release.yml         # Tag v* → validates version, publishes GitHub Release with extension zip
+│   │   └── validator-live.yml  # Live Validator tests against the real Claude API (manual / on main)
+│   └── dependabot.yml          # Weekly dependency update PRs (pip, npm, Actions)
 │
-├── agents/                   # Agent pipeline (Python)
-│   ├── auditor.py            # Agent 1: token count, cost estimate, waste issues, severity
-│   ├── optimizer.py          # Agent 2: prompt rewriting (in progress)
-│   ├── testing_agent.py      # Scratch script for testing the Anthropic API connection
-│   └── readme.md             # Agents progress log (decisions, bugs, fixes)
+├── agents/                     # Agent pipeline (Python)
+│   ├── auditor.py              # Agent 1: token count, cost estimate, waste issues, severity
+│   ├── optimizer.py            # Agent 2: rewrites the prompt to cut tokens, reports tokens/percent saved
+│   ├── validator.py            # Agent 3: ReAcT-structured check that the rewrite preserves intent (score 1-10, pass/fail)
+│   ├── testing_agent.py        # Scratch script for testing the Anthropic API connection
+│   └── readme.md               # Agents progress log (decisions, bugs, fixes)
 │
 ├── tests/
-│   └── test_auditor.py       # Offline unit tests for the Auditor (no API key needed)
+│   ├── test_auditor.py         # Offline unit tests for the Auditor (no API key needed)
+│   ├── test_optimizer.py       # Offline unit tests for the Optimizer (fake Anthropic client)
+│   ├── test_validator.py       # Offline unit tests for the Validator (fake Anthropic client)
+│   └── test_validator_live.py  # Live Validator tests (marked `live`, skipped by default)
 │
-├── scripts/
-│   └── package_extension.py  # Validates manifest.json and zips the extension files
+├── src/                        # Extension popup: React + TypeScript
+│   ├── main.tsx                # Entry point, ClerkProvider setup and theming
+│   ├── App.tsx                 # Sign-in / sign-up / signed-in views
+│   └── style.css               # Popup styles
 │
-├── config/
-│   └── prices.yaml           # Model pricing (to be wired into cost estimates)
+├── content.ts                  # Content script injected into ChatGPT (prompt box detection, in progress)
+├── index.html                  # Extension popup HTML (mounts src/main.tsx)
+├── manifest.json               # Chrome extension manifest (MV3)
+├── vite.config.ts              # Vite build for the extension (@crxjs/vite-plugin)
+├── package.json                # Extension JS deps (React, Clerk, Vite)
+├── tsconfig.json               # TypeScript config for the extension
+├── Token_Watching_Logo.png     # Extension icon
 │
-├── dashboard/                # Web dashboard: React + TypeScript (Vite), Clerk auth
+├── dashboard/                  # Web dashboard: React + TypeScript (Vite), Clerk auth
 │   └── src/
 │
-├── manifest.json             # Chrome extension manifest (MV3)
-├── hello.html                # Extension popup (placeholder)
-├── hello_extensions.png      # Extension icon
+├── scripts/
+│   └── package_extension.py    # Validates manifest.json and zips the extension files
 │
-├── requirements.txt          # Runtime Python deps
-├── requirements-dev.txt      # + pylint, pytest
-├── pylintrc.toml             # Pylint config (CI fails below fail-under score)
-├── pytest.ini                # Pytest config (tests import from agents/)
+├── config/
+│   └── prices.yaml             # Per-model pricing and modifiers (to be wired into cost estimates)
+│
+├── requirements.txt            # Runtime Python deps (anthropic, tiktoken, python-dotenv)
+├── requirements-dev.txt        # + pylint, pytest
+├── pylintrc.toml               # Pylint config (CI fails below fail-under score)
+├── pytest.ini                  # Pytest config (skips `live` tests unless run with -m live)
 └── README.md
+```
+
+### Running the tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest              # offline unit tests only
+pytest -m live      # live Validator tests (needs ANTHROPIC_API_KEY)
 ```
  
 ## Dependency Updates (Dependabot)
@@ -126,11 +148,15 @@ Configured in [`.github/dependabot.yml`](.github/dependabot.yml). Review and mer
  
 ## Tech Stack
  
-- **Backend:** FastAPI (Python), `tiktoken`, Anthropic/OpenAI SDK
-- **Extension:** Manifest V3, JavaScript/React (popup)
-- **Deployment:** Railway/Render (backend), Vercel (dashboard)
-  
+- **Agents:** Python 3.12+, Anthropic SDK (Claude Sonnet 4.6), `tiktoken` for token counting, `python-dotenv`
+- **Extension:** Chrome Manifest V3, React 19 + TypeScript popup, built with Vite + `@crxjs/vite-plugin`
+- **Auth:** Clerk (`@clerk/chrome-extension` in the extension, `@clerk/react` in the dashboard)
+- **Dashboard:** React 19 + TypeScript (Vite), linted with oxlint
+- **Testing & CI:** pytest (offline + live suites), pylint, GitHub Actions, Dependabot
+
 - **Future Goals**
-  - **Dashboard:** React (Vite), Tailwind, Recharts
-    - **Database:** SQLite (dev) → Postgres (production path)
+  - **Backend:** FastAPI orchestrator serving the agent pipeline
+  - **Dashboard:** Tailwind, Recharts
+  - **Database:** SQLite (dev) → Postgres (production path)
+  - **Deployment:** Railway/Render (backend), Vercel (dashboard)
 ---

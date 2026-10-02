@@ -1,7 +1,7 @@
 body {
   background-color:#4B3A30;
-  width: 330px;
-  min-height: 160px;
+  width: 420px;
+  min-height: 620px;
   margin: 0;
   font-family: Arial, sans-serif;
   padding-bottom: 10px;
@@ -45,7 +45,7 @@ h4{
 .Board1{
 margin-left: 10px;
 margin-right: 10px;
-padding-top: 1px; 
+padding-top: 1px;
 padding-bottom: 10px;
 text-align: center;
 background-color: #85A08F;
@@ -64,7 +64,6 @@ input {
   transition: 0.1s ease;
   z-index: 1111;
 }
-
 .container {
   position: relative;
   width: 100%;
@@ -81,7 +80,6 @@ input {
   color: #E6D9E2; 
   transition: 0.2s ease;
 }
-
 
 input:focus,
 input:valid {
@@ -112,15 +110,14 @@ input:not(:placeholder-shown) + .lableLine {
   gap: 5px;
   align-items: center;
   justify-content: center;
-  padding-bottom: 10px;
-
+  padding: 0 20px 10px;
 }
 
-button{
-  padding: 15px;
-  width: 120px;
-  font-weight: bold;
-  font-size: auto;
+.app-button{
+  width: 100%;
+  padding: 10px;
+  font-weight: 600;
+  font-size: 14px;
   text-align: center;
   background-color: #E6D9E2;
   color: #4B3A30;
@@ -145,8 +142,12 @@ button{
   background: #85A08F;          
   margin-bottom: 12px;
   border-radius: 10px;
+  cursor: pointer;
+  color: white;
+  transition: background 0.15s ease;
+    border-radius: 10px;
+  
 }
-
 .nav-item {
   flex: 1;
   padding: 8px 12px;

@@ -1,18 +1,9 @@
 import { useState } from 'react';
-import Login from './pages/Login';
-import Chatbox from './pages/Chatbox';
-import History from './pages/History';
-import Stats from './pages/Stats';
-import Navbar, { type Tab } from './components/Navbar';
+import { Show, SignIn, SignUp, UserButton } from '@clerk/chrome-extension';
 
 
 function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [tab, setTab] = useState<Tab>('prompt');
-
-  if (!loggedIn) {
-    return <Login onLogin={() => setLoggedIn(true)} />;
-  }
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
 
   return (
     <>
@@ -25,6 +16,29 @@ function App() {
       {tab === 'stats' && <Stats />}
       {tab === 'prompt' && <Chatbox />}
       {tab === 'history' && <History />}
+      <Show when="signed-out">
+        <div className="Board1">
+          {mode === 'sign-in' ? <SignIn routing="hash" /> : <SignUp routing="hash" />}
+
+          <div className="buttons">
+            {mode === 'sign-in' ? (
+              <button type="button" className="app-button" onClick={() => setMode('sign-up')}>
+                Sign up instead
+              </button>
+            ) : (
+              <button type="button" className="app-button" onClick={() => setMode('sign-in')}>
+                Sign in instead
+              </button>
+            )}
+          </div>
+        </div>
+      </Show>
+
+      <Show when="signed-in">
+        <div className="Board1">
+          <UserButton />
+        </div>
+      </Show>
     </>
   );
 }
