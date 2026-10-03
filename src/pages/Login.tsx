@@ -33,7 +33,7 @@ function Login({ onLogin }: LoginProps) {
         <button onClick={onLogin}>Login</button>
         <button>Signup</button>
       </div>
-        <a href="">forgot passoword</a>
+        <a href="">forgot password</a>
     </div>
     </>
   );
