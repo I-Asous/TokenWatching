@@ -14,7 +14,7 @@ function Chatbox() {
           activeTab.id, 
           { action: "get_chatgpt_text" }, 
           (response) => {
-            // 3. Put the response into state
+            // 3. Put the response into extension
             if (response && response.promptText) {
               setPromptValue(response.promptText);
             }
@@ -27,12 +27,13 @@ function Chatbox() {
   return (
     <div>
       <div className="Board1">
-        <h4>Enter Prompt</h4>
+        <h4 className="enter">Enter Prompt</h4>
 
-        {/* Bind state to the textarea so the text appears automatically */}
+        {}
         <textarea 
           className="promptext"
           value={promptValue}
+          placeholder='Ex: Write me an email telling my boss that Ill be late to work due to an emergency at work'
           onChange={(e) => setPromptValue(e.target.value)}
         />
       </div>
