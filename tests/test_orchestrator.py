@@ -4,7 +4,7 @@ Offline unit tests for the orchestrator
 import pytest
 from agents import orchestrator
 from agents.auditor import AuditResult
-from agents.optimizer import OptimizationResult
+from agents.optimizer import OptimizationResult, RejectedAttempt
 from agents.validator import ValidationResult
 
 PROMPT = "Please, could you kindly write a short story about a dragon? Thank you so much!"
@@ -18,15 +18,19 @@ class FakeAgents:
         self.rewrites = rewrites
         self.verdicts = verdicts
         self.optimizerCalls = []
+        self.rejectedCalls = []
         self.validatorCalls = []
+        self.targets = []
 
-    def auditPrompt(self, prompt):
+    def auditPrompt(self, prompt, target):
+        self.targets.append(target)
         return AuditResult(token_count=20, estimatedCost=0.0, issues=self.issues, severity="Medium")
 
-    def optimizePrompt(self, prompt, issues):
+    def optimizePrompt(self, prompt, issues, target, rejectedAttempts=None):
+        self.targets.append(target)
         rewrite, tokensSaved = self.rewrites[len(self.optimizerCalls)]
-        #Copy the list, since the orchestrator keeps appending to it between attempts
         self.optimizerCalls.append(list(issues))
+        self.rejectedCalls.append(list(rejectedAttempts or []))
         return OptimizationResult(
             originalPrompt=prompt,
             optimizedPrompt=rewrite,
@@ -34,6 +38,7 @@ class FakeAgents:
             optimizedTokens=20 - tokensSaved,
             tokensSaved=tokensSaved,
             percentSaved=tokensSaved * 5.0,
+            changes=["removed filler"],
         )
 
     def validatePrompt(self, originalPrompt, optimizedPrompt):
@@ -83,8 +88,21 @@ def test_runPipeline_first_attempt_passes(fakeAgents):
     assert len(result.attempts) == 1
     assert result.tokensSaved == 12
     assert result.percentSaved == 60.0
+    assert result.changes == ["removed filler"]
 
-#A rejected rewrite is retried, with the Validator's reason passed to Agent 2 as an extra issue
+#The target LLM is forwarded to the Auditor and Optimizer so both count with its tokenizer
+def test_runPipeline_forwards_target(fakeAgents):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)], verdicts=[(True, "Only filler removed.")])
+    orchestrator.runPipeline(PROMPT, target="claude")
+    assert fake.targets == ["claude", "claude"]
+
+#Without a target, the pipeline defaults to ChatGPT
+def test_runPipeline_defaults_to_chatgpt(fakeAgents):
+    fake = fakeAgents(issues=[])
+    orchestrator.runPipeline(PROMPT)
+    assert fake.targets == ["chatgpt"]
+
+#A rejected rewrite is retried, with that rewrite and the Validator's reason passed to Agent 2
 def test_runPipeline_retries_with_validator_feedback(fakeAgents):
     fake = fakeAgents(
         issues=["filler"],
@@ -93,17 +111,28 @@ def test_runPipeline_retries_with_validator_feedback(fakeAgents):
     )
     result = orchestrator.runPipeline(PROMPT)
 
-    assert len(fake.optimizerCalls) == 2
-    assert fake.optimizerCalls[0] == ["filler"]
-    assert fake.optimizerCalls[1][0] == "filler"
-    assert "attempt 1" in fake.optimizerCalls[1][1]
-    assert "Dropped the dragon." in fake.optimizerCalls[1][1]
+    assert fake.optimizerCalls == [["filler"], ["filler"]]
+    assert fake.rejectedCalls == [[], [RejectedAttempt("Write a story.", "Dropped the dragon.")]]
     assert result.finalPrompt == REWRITE
     assert result.wasOptimized is True
     assert [attempt.passed for attempt in result.attempts] == [False, True]
     assert result.tokensSaved == 12
 
-#The retry feedback is added to a copy, so the audit's own issue list is left alone
+#Every earlier rejection is passed on, not just the latest one
+def test_runPipeline_passes_all_rejected_attempts(fakeAgents):
+    fake = fakeAgents(
+        issues=["filler"],
+        rewrites=[("Write a story.", 15), ("Write about a dragon.", 14), (REWRITE, 12)],
+        verdicts=[(False, "Dropped the dragon."), (False, "Dropped short story."), (True, "Fine.")],
+    )
+    orchestrator.runPipeline(PROMPT)
+
+    assert fake.rejectedCalls[2] == [
+        RejectedAttempt("Write a story.", "Dropped the dragon."),
+        RejectedAttempt("Write about a dragon.", "Dropped short story."),
+    ]
+
+#Retry feedback never leaks into the audit's own issue list
 def test_runPipeline_does_not_mutate_audit_issues(fakeAgents):
     fakeAgents(
         issues=["filler"],
