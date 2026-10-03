@@ -1,7 +1,7 @@
 from typing import Any
 from datetime import datetime
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field
+from pydantic import UUID4, BaseModel, Field
 
 class Prompt(BaseModel):
     prompt_id: int
