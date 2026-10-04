@@ -1,3 +1,4 @@
 anthropic 
+pydantic
 python-dotenv
 tiktoken
