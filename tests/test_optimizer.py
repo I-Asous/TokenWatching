@@ -1,6 +1,7 @@
 """
 Offline unit tests for second agent
 """
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from agents import optimizer
@@ -26,7 +27,8 @@ class FakeMessages:
 
     def parse(self, **kwargs):
         self.lastRequest = kwargs
-        return SimpleNamespace(parsed_output=self.reply, stop_reason=self.stopReason)
+        usage = SimpleNamespace(cache_read_input_tokens=0, cache_creation_input_tokens=0)
+        return SimpleNamespace(parsed_output=self.reply, stop_reason=self.stopReason, usage=usage)
 
 
 @pytest.fixture
@@ -87,7 +89,11 @@ def test_callOptimizerLLM_sends_system_prompt_and_strips(fakeClient):
     result = optimizer.callOptimizerLLM("Please write a poem.", ["Filler words"])
 
     assert result.optimizedPrompt == "Write a poem."
-    assert messages.lastRequest["system"] == optimizer.OPTIMIZER_SYSTEM_PROMPT
+    assert messages.lastRequest["system"] == [{
+        "type": "text",
+        "text": optimizer.OPTIMIZER_SYSTEM_PROMPT,
+        "cache_control": {"type": "ephemeral"},
+    }]
     assert messages.lastRequest["output_format"] is Rewrite
     assert messages.lastRequest["model"] == optimizer.OPTIMIZER_MODEL
     userContent = messages.lastRequest["messages"][0]["content"]
@@ -188,3 +194,46 @@ def test_formatComparisonTable_wraps_long_prompts():
     lines = table.split("\n")
     assert len({len(line) for line in lines}) == 1
     assert all(len(line) < 80 for line in lines)
+
+#Examples marked unchanged copy the input verbatim and list no edits, matching what the prompt asks for
+@pytest.mark.parametrize("prompt, rewrite", optimizer.OPTIMIZER_EXAMPLES)
+def test_examples_are_consistent(prompt, rewrite):
+    assert rewrite.preservedConstraints
+    if rewrite.unchanged:
+        assert rewrite.optimizedPrompt == prompt
+        assert rewrite.changes == []
+    else:
+        assert rewrite.optimizedPrompt != prompt
+        assert rewrite.changes
+        assert optimizer.countTokens(rewrite.optimizedPrompt) < optimizer.countTokens(prompt)
+
+#The examples teach both outcomes, so the model doesn't learn to always rewrite
+def test_examples_include_unchanged_cases():
+    unchangedCount = sum(rewrite.unchanged for _, rewrite in optimizer.OPTIMIZER_EXAMPLES)
+    assert unchangedCount >= 2
+
+#Code in an example survives the rewrite character for character
+def test_code_example_keeps_code_block():
+    codeExamples = [(p, r) for p, r in optimizer.OPTIMIZER_EXAMPLES if "```" in p]
+    assert codeExamples
+    for prompt, rewrite in codeExamples:
+        codeBlock = prompt[prompt.index("```"):prompt.rindex("```") + 3]
+        assert codeBlock in rewrite.optimizedPrompt
+
+#Every example is rendered into the system prompt
+def test_system_prompt_contains_examples():
+    for prompt, rewrite in optimizer.OPTIMIZER_EXAMPLES:
+        assert prompt in optimizer.OPTIMIZER_SYSTEM_PROMPT
+        assert rewrite.model_dump_json(indent=2) in optimizer.OPTIMIZER_SYSTEM_PROMPT
+
+#The system prompt is long enough to be cached (Sonnet 5.5's minimum is 512 tokens), with margin
+#since this is a ChatGPT-tokenizer estimate of a Claude count
+def test_system_prompt_is_cacheable():
+    assert optimizer.countTokens(optimizer.OPTIMIZER_SYSTEM_PROMPT) > 512 * 1.5
+
+#No example reuses a prompt the __main__ cases test, so passing those cases still means something
+def test_examples_do_not_reuse_main_cases():
+    source = Path(optimizer.__file__).read_text(encoding="utf-8")
+    mainBlock = source[source.index('if __name__ == "__main__":'):]
+    for prompt, _ in optimizer.OPTIMIZER_EXAMPLES:
+        assert prompt[:40] not in mainBlock
