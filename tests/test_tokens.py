@@ -2,8 +2,12 @@
 Offline unit tests for the shared token counter
 """
 from types import SimpleNamespace
-import httpx
 import pytest
+#anthropic 1.x is built on httpx2 and 0.x on httpx; build the fake request with whichever the SDK uses
+try:
+    import httpx2 as httpx
+except ImportError:
+    import httpx
 from anthropic import APIConnectionError
 from agents import tokens
 
