@@ -20,6 +20,28 @@ h1{
   color: #E6D9E2;
   text-align: center;
 }
+
+h2{
+  margin-top: 10px;
+  margin-bottom: 10px;
+  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  font-size: 25px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #E6D9E2;
+  text-align: center;
+}
+
+h4{
+  margin-top: 20px;
+  margin-bottom: 10px;
+  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  font-size: 15px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #E6D9E2;
+  text-align: center;
+}
 .Board1{
 margin-left: 10px;
 margin-right: 10px;
@@ -28,6 +50,59 @@ padding-bottom: 10px;
 text-align: center;
 background-color: #85A08F;
 border-radius: 10px;
+}
+
+input {
+  width: 70%;
+  outline: none;
+  font-size: 1.5em;
+  line-height: 35px;
+  border-radius: 10px;
+  padding: 0 15px;
+  border: 2px solid #E6D9E2;
+  background: transparent;
+  transition: 0.1s ease;
+  z-index: 1111;
+}
+.container {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.lableLine {
+  position: absolute;
+  left: 15%;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none; 
+  color: #E6D9E2; 
+  transition: 0.2s ease;
+}
+
+input:focus,
+input:valid {
+  color: #E6D9E2;
+  border: 2px solid #E6D9E2;
+}
+
+input:focus + .lableLine,
+input:not(:placeholder-shown) + .lableLine {
+  color: #E6D9E2;
+  height: 10px;
+  line-height: 10px;
+  background-color: #85A08F;
+  transform: translate(-8px, -23px) scale(.88); 
+  z-index: 1111;
+}
+
+.input-login{
+  padding-bottom: 10px;
+  display: flex;
+  gap: 10px;
+  flex-direction: column;
+  align-items: center;
 }
 
 .buttons{
@@ -46,11 +121,77 @@ border-radius: 10px;
   text-align: center;
   background-color: #E6D9E2;
   color: #4B3A30;
-  border: none;
   border-radius: 10px;
-  cursor: pointer;
 }
 
-.app-button:disabled {
-  opacity: 0.6;
+.promptext{
+  width: 90%;
+  min-height: 3em;     
+  max-height: 8em;
+  field-sizing: content;
+  resize: none;
+  background-color: #4B3A30;
+  color: #E6D9E2;
+  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  padding-bottom: 20px;
+  margin-bottom: 30px;
+}
+.navbar {
+  display: flex;
+  gap: 4px;
+  background: #85A08F;          
+  margin-bottom: 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: white;
+  transition: background 0.15s ease;
+    border-radius: 10px;
+  
+}
+.nav-item {
+  flex: 1;
+  padding: 8px 12px;
+  background: #85A08F;          
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  color: white;
+  transition: background 0.15s ease;
+  border-radius: 10px;
+  
+}
+
+.nav-item:hover {
+  background: #14532d;          
+}
+
+.nav-item:active {
+  background: #0f3d21;          
+}
+
+.nav-item.active {
+  background: #1b7a3a;         
+  border-bottom-color: white;
+  font-weight: 600;
+}
+
+.enter{
+  padding-top: 30px;
+  padding-bottom: 5px;
+}
+.boardContainer{
+  display: flex;             /* Places children side-by-side */
+  justify-content: center;   /* Centers them horizontally */
+  align-items: center;       /* Centers them vertically */
+  gap: 10px;                 /* Adds spacing between the two doughnuts */
+}
+.board2{
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: transparent;
+  border-radius: 10px;
+  width: 150px;
+  height: 150px;
+  margin-left: 5px;
 }
