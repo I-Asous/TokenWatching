@@ -18,10 +18,10 @@ class AuditResult:
 * @post
 * 1. The token count is divided into per-1000-token units.
 * 2. Cost is calculated using the provided (or default) rate.
-* 3. The result is rounded to 3 decimal places and returned.
+* 3. The unrounded result is returned; callers round when displaying it.
 """
-def estimateCost(token_count: int, rate_per_100k: float = 0.003) -> float:
-    return round((token_count / 1000) * rate_per_100k, 3)
+def estimateCost(token_count: int, rate_per_1k: float = 0.003) -> float:
+    return (token_count / 1000) * rate_per_1k
 
 """
 * @brief Runs fast, rule-based checks for common token-waste patterns.

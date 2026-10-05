@@ -11,7 +11,7 @@ def test_countTokens_counts_nonempty_text():
     assert auditor.countTokens("Hello, world") > 0
     assert auditor.countTokens("") == 0
 
-#Cost is proportional to token count and rounded to 3 decimals
+#Cost is proportional to token count
 def test_estimateCost_scales_with_tokens():
     assert auditor.estimateCost(0) == 0
     assert auditor.estimateCost(1_000_000) == 3.0
