@@ -1,4 +1,4 @@
-.env
+**/.env
 .secrets
 .git
 .github
@@ -9,5 +9,5 @@ dashboard
 src
 tests
 *.png
-__pycache__
+**/__pycache__
 .pytest_cache

@@ -119,6 +119,14 @@ TokenWatching/
 ├── config/
 │   └── prices.yaml             # Per-model pricing and modifiers (to be wired into cost estimates)
 │
+├── backend/                    # FastAPI API: routes, Supabase repository, Pydantic schemas
+│   ├── main.py                 # App entry point (uvicorn main:app)
+│   ├── routes/ repository/ schema/
+never committed
+│
+├── Dockerfile                  # Container image for the backend (Python 3.13, uvicorn, non-root user)
+├── .dockerignore               # Keeps secrets, extension, dashboard and node_modules out of the image
+│
 ├── requirements.txt            # Runtime Python deps (anthropic, tiktoken, python-dotenv)
 ├── requirements-dev.txt        # + pylint, pytest
 ├── pylintrc.toml               # Pylint config (CI fails below fail-under score)
