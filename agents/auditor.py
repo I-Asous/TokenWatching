@@ -1,8 +1,8 @@
 import os
 #import re
 from dataclasses import dataclass, field 
-import tiktoken
 from anthropic import Anthropic
+from agents.tokens import countTokens, DEFAULT_TARGET
 
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -13,16 +13,6 @@ class AuditResult:
     issues: list[str] = field(default_factory = list)
     severity: str = "Low"
     
-"""
-* @brief Counts the number of tokens in a text string
-* @post
-*  1. The text is encoded using the cl100k_base tokenizer
-*  2. The number of resulting tokens is calculated then returned
-"""
-def countTokens(text: str) -> int:
-    encoding = tiktoken.get_encoding("cl100k_base")
-    return len(encoding.encode(text))
-
 """
 * @brief Estimates the dollar cost of a prompt based on token count.
 * @post
@@ -103,14 +93,14 @@ def determineSeverity(token_count: int, issue_count: int) -> str:
 """
 * @brief Executes the full audit process on a single user-submitted prompt.
 * @post
-* 1. The prompt's token count and estimated cost are calculated.
+* 1. The prompt's token count (as the target LLM tokenizes it) and estimated cost are calculated.
 * 2. Fast rule-based checks are run against the prompt.
 * 3. If the prompt is long and no rule-based issues were found, an LLM review is triggered and its findings are appended.
 * 4. A severity rating is computed from the final issue count and token count.
 * 5. A populated AuditResult object is returned, containing all of the above.
 """
-def auditPrompt(prompt: str) -> AuditResult:
-    token_count = countTokens(prompt)
+def auditPrompt(prompt: str, target: str = DEFAULT_TARGET) -> AuditResult:
+    token_count = countTokens(prompt, target)
     cost = estimateCost(token_count)
     issues = runRuleCheck(prompt, token_count)
 

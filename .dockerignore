@@ -1,0 +1,13 @@
+**/.env
+.secrets
+.git
+.github
+.vscode
+node_modules
+dist
+dashboard
+src
+tests
+*.png
+**/__pycache__
+.pytest_cache
