@@ -1,24 +1,22 @@
 body {
-  background-color:#4B3A30;
+  background-color:#F0F4F5;
   width: 420px;
   min-height: 620px;
   margin: 0;
   font-family: Arial, sans-serif;
   padding-bottom: 10px;
-}
-.Logo{
-  margin-top: 0;
-  border-top: 0;
+  border-radius: 10px;
 }
 
 h1{
+  margin-left: 10px;
   margin-top: 10px;
+  margin-bottom: 10px;
   font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
   font-size: 30px;
   font-weight: bold;
   text-transform: uppercase;
-  color: #E6D9E2;
-  text-align: center;
+  color: #000000;
 }
 
 h2{
@@ -28,7 +26,7 @@ h2{
   font-size: 25px;
   font-weight: bold;
   text-transform: uppercase;
-  color: #E6D9E2;
+  color: #000000;
   text-align: center;
 }
 
@@ -39,16 +37,14 @@ h4{
   font-size: 15px;
   font-weight: bold;
   text-transform: uppercase;
-  color: #E6D9E2;
+  color: #000000;
   text-align: center;
 }
 .Board1{
-margin-left: 10px;
-margin-right: 10px;
 padding-top: 1px;
 padding-bottom: 10px;
 text-align: center;
-background-color: #85A08F;
+background-color: #ffffff;
 border-radius: 10px;
 }
 
@@ -130,48 +126,55 @@ input:not(:placeholder-shown) + .lableLine {
   max-height: 8em;
   field-sizing: content;
   resize: none;
-  background-color: #4B3A30;
-  color: #E6D9E2;
+  background-color: #ffffff;
+  color: #000000;
   font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
   padding-bottom: 20px;
   margin-bottom: 30px;
+  border-radius: 10px;
+  border-color: #0000001d;
 }
 .navbar {
   display: flex;
   gap: 4px;
-  background: #85A08F;          
+  background: #F0F4F5;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  margin-top: 10px;          
   margin-bottom: 12px;
+  margin-left: 5px;
+  margin-right: 5px;
   border-radius: 10px;
   cursor: pointer;
-  color: white;
+  color: rgb(0, 0, 0);
   transition: background 0.15s ease;
     border-radius: 10px;
   
 }
 .nav-item {
   flex: 1;
-  padding: 8px 12px;
-  background: #85A08F;          
+  padding: 8px 8px;
+  margin: auto;
+  background: #F0F4F5;          
   border: none;
   border-bottom: 3px solid transparent;
   cursor: pointer;
-  color: white;
+  color: rgb(0, 0, 0);
   transition: background 0.15s ease;
   border-radius: 10px;
-  
+
 }
 
 .nav-item:hover {
-  background: #14532d;          
+  background: #ffffff;          
 }
 
 .nav-item:active {
-  background: #0f3d21;          
+  background: #ffffff;          
 }
 
 .nav-item.active {
-  background: #1b7a3a;         
-  border-bottom-color: white;
+  background: #ffffff;
   font-weight: 600;
 }
 
@@ -180,10 +183,10 @@ input:not(:placeholder-shown) + .lableLine {
   padding-bottom: 5px;
 }
 .boardContainer{
-  display: flex;             /* Places children side-by-side */
-  justify-content: center;   /* Centers them horizontally */
-  align-items: center;       /* Centers them vertically */
-  gap: 10px;                 /* Adds spacing between the two doughnuts */
+  display: flex;
+  justify-content: center;   
+  align-items: center;
+  gap: 10px;
 }
 .board2{
   display: flex;

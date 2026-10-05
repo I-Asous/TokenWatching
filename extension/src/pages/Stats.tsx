@@ -4,7 +4,7 @@ import {Bar, Doughnut, Line} from "react-chartjs-2";
 export default function Stats() {
   return (
     <div className="Board1">
-      <h4>Stats</h4>
+      <h4>My Summary</h4>
       <div>
         <Bar
         data={{
