@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import UUID4
 
 from repository import users as user_repository
 from schema.users import AuthUserResponse, CreateUser, UpdateUser
@@ -19,7 +18,7 @@ def create_user(user: CreateUser):
 
 # delete a user
 @router.delete("/users/{user_id}")
-def delete_user(user_id: UUID4):
+def delete_user(user_id: str):
     try:
         return user_repository.delete_user(user_id)
     except RuntimeError as exc:
@@ -28,7 +27,7 @@ def delete_user(user_id: UUID4):
 
 # user updates information
 @router.put("/users/{user_id}")
-def update_user(user_id: UUID4, user: UpdateUser):
+def update_user(user_id: str, user: UpdateUser):
     try:
         return user_repository.update_user(user, user_id)
     except RuntimeError as exc:
