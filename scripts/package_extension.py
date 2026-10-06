@@ -124,8 +124,9 @@ def main() -> int:
     if manifest.get("manifest_version") != 3:
         errors.append("manifest_version must be 3 (Chrome Web Store rejects MV2)")
     version = str(manifest.get("version", ""))
-    if not re.fullmatch(r"\d+(\.\d+){0,3}", version):
-        errors.append(f"version '{version}' must be 1-4 dot-separated integers")
+    if not re.fullmatch(r"(0|[1-9]\d*)(\.(0|[1-9]\d*)){0,3}", version):
+        errors.append(f"version '{version}' must be 1-4 dot-separated integers "
+                      "without leading zeros")
     if opts.check_version and opts.check_version.lstrip("v") != version:
         errors.append(f"tag {opts.check_version} does not match manifest version {version}")
 
