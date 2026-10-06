@@ -13,10 +13,11 @@ CLAUDE = "claude"
 TARGETS = (CHATGPT, CLAUDE)
 DEFAULT_TARGET = CHATGPT
 
-#GPT-4o and every newer ChatGPT model use o200k_base
+#had the old stuff...
+#GPT-4o and every newer gpt model use o200k_base
 CHATGPT_ENCODING = "o200k_base"
 
-#Claude tokenizer So count against the current claude.ai model
+#Claude tokenizer soso count against the current claude.ai model
 CLAUDE_COUNT_MODEL = "claude-sonnet-5-5"
 
 """
