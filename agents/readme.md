@@ -6,14 +6,14 @@ This README tracks what's been built in `agents/`, why specific decisions were m
 
 ## Agent 1 — Auditor (`auditor.py`)
 
-### Status: Core logic is now working (9/23/2026)
+### Status: Core logic working. Token counting moved to `tokens.py`, cost estimate no longer rounded (10/4/2026)
 
 ### What it does
 
 Takes a single user-submitted prompt and returns:
 
-- Token count (via `tiktoken`, `cl100k_base` encoding)
-- Estimated dollar cost (placeholder flat rate — will connect to `pricing.yaml` once `config/` is created)
+- Token count, as the target LLM (`chatgpt` or `claude`) tokenizes it. Counting now lives in `tokens.py` (see the Token counting section); `auditPrompt(prompt, target)` passes the target through
+- Estimated dollar cost (flat rate of $0.003 per 1K tokens, i.e. $3 per million. `config/prices.yaml` exists now but isn't wired in yet)
 - A list of flagged waste issues (rule-based checks, escalates to an LLM review only when the prompt is long and no rule-based issues were actually found)
 - A severity rating (`Low` / `Medium` / `High`)
 
@@ -24,6 +24,8 @@ Takes a single user-submitted prompt and returns:
 - **Tiered analysis (rule-based first, LLM only when needed):** since Agent 1's whole job is flagging wasted tokens, it shouldn't itself waste tokens doing so itself. Cheaper, deterministic checks run first (token-to-word ratio, filler word count, excessive blank lines). The LLM review only fires if the prompt is long (> 500 tokens) and none of the rule-based checks caught anything ie there might be subtler issues.
 - **Plain functions, not a class:** originally tried wrapping everything in a `@dataclass class Auditor` with methods... reverted this. None of the functions need shared state (so no `self.something` is used across calls), thus plain top-level functions are simpler and match how the orchestrator will call this file later (`from agents.auditor import auditPrompt`).
 - **`AuditResult` is a separate dataclass, data only:** keeps the "what data comes back" separate from "how it's calculated". Overall its just cleaner to reason about and test.
+- **Token counting is shared, not owned by Agent 1:** `countTokens()` used to live here. It moved to `tokens.py` so Agents 1 and 2 count the same way for the same target, and the result is cached between them.
+- **`estimateCost()` returns the unrounded value:** rounding happens where the number is displayed (e.g. `formatComparisonTable()` formats with 3 decimals). Rounding inside the function made every normal prompt cost `0.0`.
 
 ### Bugs encountered + fixes
 
@@ -33,14 +35,21 @@ Takes a single user-submitted prompt and returns:
 | `TypeError: AuditResult.__init__() got an unexpected keyword argument 'severity'` | `auditPrompt()` was updated to pass `severity=severity` into `AuditResult(...)`, but the `AuditResult` dataclass definition hadn't been updated to include a `severity` field yet so edits were made in one place but not the other | Added`severity: str = "Low"` as a field on `AuditResult`                                                                                                                                                                                                                    |
 | Would-be`ZeroDivisionError` on empty prompt input                                 | `if word_count > 0 or (token_count / word_count) > 1:` — used `or` instead of `and`. With `or`, Python still evaluates the division even when `word_count` is 0, since the check doesn't short-circuit the way `and` does        | Changed`or` → `and`. Now if `word_count` is 0, Python short-circuits and never evaluates the division — no crash, and the ratio check also works correctly (previously `or` made the condition nearly always `True`, so the check wasn't really filtering anything) |
 | Would-be`NameError: name 'llm_review' is not defined`                             | `auditPrompt()` called `llm_review(prompt)` (snake_case), but the function was actually defined as `llmReview` (camelCase) — naming drift between edits                                                                                | Corrected the call site to`llmReview(prompt)`, matching the actual function name                                                                                                                                                                                              |
+| `estimatedCost` was `0.0` for almost every prompt | `estimateCost()` rounded to 3 decimals, and a single prompt costs a fraction of a cent (any prompt under about 170 tokens rounded to $0.000) | Removed the rounding. The function returns the raw value (30 tokens → `0.00009`) and callers round when they display it |
+| The rate parameter's name didn't match the math | It was called `rate_per_100k`, but the function divides by 1,000 and the default `0.003` is a per-1K rate. Changing the divisor to 100,000 to match the name made costs 100x too low and failed `test_estimateCost_scales_with_tokens` (1M tokens gave $0.03, not $3.00) | Kept the divisor at 1,000 and renamed the parameter to `rate_per_1k` |
 
 ### Known limitations / things to revisit
 
-- Cost estimate uses a flat hardcoded rate, needs to connect to `config/pricing.yaml` once that file and `services/cost_calculator.py` exist
-- Token counts are `tiktoken`-based estimates, not exact for Claude models (Anthropic doesn't expose a public tokenizer) — Note. worth stating this explicitly in the final pitch
+- Cost estimate uses a flat hardcoded rate. `config/prices.yaml` now exists but nothing reads it, and it has no entry for `claude-sonnet-5-5` yet
+- ~~Token counts are `tiktoken`-based estimates, not exact for Claude models~~ **Fixed.** With `target="claude"`, counts come from Anthropic's `count_tokens` endpoint (see the Token counting section). ChatGPT counts use `o200k_base` instead of the older `cl100k_base`
 - Naming convention is currently a mix of `camelCase` and `snake_case`,  worth standardizing (team decision) before this gets much bigger
 - ~~Open bug: token-to-word ratio check over-flags~~ **Fixed.** The threshold was `> 1`, but normal English averages ~1.3 tokens/word, so almost every prompt got flagged (e.g. `"What is the capital of France?"` → 7 tokens / 6 words → flagged), and severity was almost never `Low`. Raised it to `> 1.6` (a bit above the ~1.3 average) and removed the `xfail` marker from the clean-prompt test. 1.6 is still a guess, so it's worth gathering real prompt data to tune it
 - `llmReview()` isn't covered by tests yet, since it needs an API key and real API calls (would need mocking)
+- **Filler words are matched as substrings:** `text.lower().count(w)` counts "just" inside "adjust" and "best" in "find the best algorithm", so normal prompts can be flagged
+- **The token-to-word ratio check also fires on code, URLs and non-English text**, which naturally have more tokens per word. Those are the prompts the Optimizer should touch least
+- **Short wordy prompts are never optimized:** under 500 tokens the LLM review doesn't run, so a prompt with fewer than 3 filler hits gets no issues and the pipeline returns it as-is
+- **`llmReview()` turns every non-empty line of the reply into an issue**, including a preamble line like "Here are the issues:". It still uses `claude-sonnet-4-6`
+- `severity` is computed but nothing in the pipeline uses it yet
 
 ### Tests (`tests/test_auditor.py`)
 
@@ -49,7 +58,7 @@ Offline unit tests. They need no API key and never call Claude. Run from the rep
 | Test                                                     | Checks                                                                        |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `test_countTokens_counts_nonempty_text`                | Non-empty text gives > 0 tokens, empty string gives 0                         |
-| `test_estimateCost_scales_with_tokens`                 | Cost is 0 for 0 tokens and scales with token count                            |
+| `test_estimateCost_scales_with_tokens`                 | Cost is 0 for 0 tokens and $3.00 for 1M tokens                                |
 | `test_runRuleCheck_flags_filler_words_and_blank_lines` | Filler words and`\n\n\n` are both flagged                                   |
 | `test_flags_excessive_blank_lines`                     | 2 newlines in a row are fine, 3+ get flagged                                  |
 | `test_runRuleCheck_clean_prompt_has_no_issues`         | A short, direct prompt has no issues (passes now that the ratio bug is fixed) |
@@ -67,15 +76,19 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 
 ## Agent 2 — Optimizer (`optimizer.py`)
 
-### Status: Core logic working, called by the orchestrator (10/1/2026)
+### Status: Reworked around structured outputs and worked examples, hardened against edge cases (10/4/2026)
 
 ### What it does
 
-Takes a prompt (plus, optionally, the issues Agent 1 flagged) and returns an `OptimizationResult` with:
+Takes a prompt, plus optionally the issues Agent 1 flagged, the target LLM, and any earlier rewrites the Validator rejected. Returns an `OptimizationResult` with:
 
 - The original and rewritten prompt
-- Token counts for both (same `tiktoken` `cl100k_base` encoding as Agent 1, so the numbers are comparable)
+- Token counts for both, counted with the target LLM's tokenizer (`tokens.py`), so the numbers match what the user is billed
 - Tokens saved and percent saved
+- `changes`: the LLM's short list of edits (e.g. "removed politeness phrasing")
+- `preservedConstraints`: the requirements the LLM said the rewrite had to keep
+
+If the LLM marks the prompt as already concise, refuses, is cut off, or returns nothing usable, the original prompt is kept and the savings are 0.
 
 ### To test: pytest tests/test_optimizer.py -v
 
@@ -114,8 +127,16 @@ Output:
 ### Design decisions
 
 - **Agent 1's issues are passed into the rewrite:** `buildUserMessage()` lists them above the prompt ("Known issues found in prompt: ..."), so the LLM targets the actual problems instead of guessing. If there are no issues, the message is just the delimited prompt.
-- **System prompt keeps meaning over length:** it removes filler and repetition but is told to keep examples, format requirements, constraints and edge cases, and to return an already-concise prompt unchanged. A shorter prompt that gives worse output isn't a saving.
-- **One before/after example in the system prompt:** shows the model the expected style of rewrite without adding many tokens.
+- **Structured output instead of free text:** the reply is constrained to the `Rewrite` schema (Pydantic, sent with `client.messages.parse(..., output_format=Rewrite)`). The rewrite arrives in its own field, so a preamble like "Here's your optimized prompt:" can't end up in the prompt the user sees.
+- **Field order is generation order:** `Rewrite` is `preservedConstraints` → `unchanged` → `optimizedPrompt` → `changes`. The model has to list what it must keep and decide whether to rewrite at all before it writes anything.
+- **An explicit `unchanged` flag:** already-direct prompts are marked unchanged and the original is kept, even if the model also wrote a rewrite. This replaced relying on the model to copy the prompt back exactly.
+- **System prompt explains the stakes, then gives rules:** it says the rewrite is a one-click replacement in a browser extension and that a changed meaning costs more trust than any tokens saved. Then four lists: what to remove (greetings, hedging, repeated instructions, wordy phrasing), what to copy exactly (code, URLs, paths, quotes, numbers, names, negations, examples, step order, the prompt's language, context that changes the answer), what isn't worth an edit (synonym swaps, dropping only "please"), and how to answer.
+- **8 worked examples, one rule each** (`OPTIMIZER_EXAMPLES`): filler removal, hard constraints, code copied exactly, negations and answer-changing context, already direct, "please"-only, merged duplicate instructions, and a Spanish prompt that stays in Spanish. Two of the eight are `unchanged`, so the model doesn't learn to always rewrite. They are rendered as `<example><input>…</input><output>…JSON…</output></example>` so the model sees every field filled in.
+- **Examples don't overlap the test prompts:** none of them reuse a prompt from the `__main__` cases, and a test enforces it, so passing those cases still means something.
+- **The prompt is treated as text, not instructions:** the system prompt says to rewrite or leave a prompt like "ignore previous instructions", never act on it.
+- **Rejected rewrites come back with their reason:** on a retry, each earlier rewrite is shown in `<rejected_rewrite>` tags with the Validator's reason, and the system prompt says to start again from the original, keep the cuts that were fine, restore what was lost, and never return a rejected rewrite again.
+- **Cached system prompt:** the system prompt is identical on every call (about 1,570 tokens by the `o200k_base` estimate), so it's sent with `cache_control: ephemeral`. Only the per-prompt text is in `messages`. Cache reads and writes are logged to confirm the cache is hit.
+- **Model moved to `claude-sonnet-5-5`** (`OPTIMIZER_MODEL`), because structured outputs weren't available on `claude-sonnet-4-6`.
 - **Same structure as Agent 1:** plain functions plus a data-only `OptimizationResult` dataclass, so the orchestrator can call `optimizePrompt()` the same way it calls `auditPrompt()`.
 - **Reuses `estimateCost()` from Agent 1** for the table, instead of a second copy of the rate.
 
@@ -123,36 +144,56 @@ Output:
 
 | Challenge                                            | Cause                                                                                              | Fix                                                                                                                                                                                            |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cost column always showed`$0.000`                  | A single prompt costs a fraction of a cent, and`estimateCost()` rounds to 3 decimals             | Table shows**cost per 1,000 runs** instead, which is also closer to how real apps pay (same prompt, many calls)                                                                          |
+| Cost column always showed`$0.000`                  | A single prompt costs a fraction of a cent, and`estimateCost()` rounded to 3 decimals            | Table shows**cost per 1,000 runs** instead, which is also closer to how real apps pay (same prompt, many calls). `estimateCost()` no longer rounds (10/4), but the table keeps this column |
 | Negative "savings"                                   | The LLM can return a rewrite that's*longer* than the original (e.g. for an already short prompt) | `tokensSaved = max(original - optimized, 0)`, so savings are never negative                                                                                                                  |
 | `ZeroDivisionError` on empty prompt                | `percentSaved` divides by `originalTokens`                                                     | Returns`0.0` when `originalTokens` is 0 (same kind of bug as the one in Agent 1)                                                                                                           |
 | Long prompts broke the table layout                  | A 500-word prompt made one very wide row                                                           | `textwrap` wraps the prompt column (default 50 chars); other cells are padded so every line has the same width                                                                               |
 | Testing without an API key / without spending tokens | `callOptimizerLLM()` makes a real Claude call                                                    | Tests swap the module's`client` for a fake one with `monkeypatch`. The fake records the request and returns a set reply, so we can check both what gets sent and how the result is handled |
 
+| The model could add a preamble or commentary around the rewrite | The reply was free text, so nothing separated the prompt from anything else the model wrote | Structured output: the rewrite is the `optimizedPrompt` field of the `Rewrite` schema |
+| "Return it unchanged" wasn't reliable | The model had to copy the prompt back exactly, and a one-word difference counted as a rewrite | Added the `unchanged` flag. When it's true the original is kept, whatever is in `optimizedPrompt` |
+| Dropping "please" could make a prompt longer | Changing the first word changes how the rest tokenizes, so a one-word cut can save nothing or add a token | The system prompt lists these edits under "Don't bother", with a "please"-only example marked unchanged |
+| A retry could repeat the same mistake | The Validator's reason was passed as one more line in the issue list, without the rewrite it referred to | `RejectedAttempt(rewrite, reason)`: the retry sees each rejected rewrite next to its reason |
+| A refused or cut-off reply would crash or return half a prompt | Nothing checked `stop_reason` | `callOptimizerLLM()` returns `None` on `refusal`, `max_tokens`, or an unparseable reply, and `optimizePrompt()` keeps the original. An empty rewrite is handled the same way |
+| Savings didn't match the LLM the user was prompting | Everything was counted with `cl100k_base`, which neither current ChatGPT models nor Claude use | `optimizePrompt(..., target=...)` counts with `tokens.py` |
+
 ### Known limitations / things to revisit
 
-- Model is hardcoded (`claude-sonnet-4-6`), should move to config along with pricing
-- `optimizePrompt()` on its own doesn't check that the LLM followed the rules. If it adds a preamble ("Here's your optimized prompt: ...") or drops a constraint, the rewrite is still returned. Inside the pipeline, Agent 3 checks the rewrite and the orchestrator falls back to the original if it fails
-- If the rewrite is longer, `optimizePrompt()` reports 0% saved but still returns the longer prompt. The orchestrator now discards a rewrite that saves nothing (see the Orchestrator section)
-- Same `tiktoken` estimate caveat as Agent 1
+- Model is a constant in the file (`OPTIMIZER_MODEL = "claude-sonnet-5-5"`), should move to config along with pricing. Agents 1 and 3 are still on `claude-sonnet-4-6`
+- `optimizePrompt()` on its own doesn't check that the rewrite kept every item in `preservedConstraints`. The list is the model's own, and nothing compares it to the rewrite. Inside the pipeline, Agent 3 checks the rewrite and the orchestrator falls back to the original if it fails
+- If the rewrite is longer, `optimizePrompt()` reports 0% saved but still returns the longer prompt. The orchestrator discards a rewrite that saves nothing (see the Orchestrator section)
+- The 10 edge cases in `__main__` (filler, concise, constraints, code, URL + quote, negation, injection, "please"-only, duplicates, Spanish) call the real API and print PASS/FAIL, but they aren't a pytest suite and don't run in CI
+- `max_tokens` is 16000 for a reply that is usually a few hundred tokens
 - Cost still uses Agent 1's flat placeholder rate
 
 ### Tests (`tests/test_optimizer.py`)
 
-Offline, no API key needed (uses the fake client described above).
+Offline, no API key needed. The fake client records the request and returns a canned parsed `Rewrite`. 31 tests (22 functions, some parametrized).
 
-| Test                                                       | Checks                                                                           |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `test_countTokens_counts_nonempty_text`                  | Non-empty text gives > 0 tokens, empty string gives 0                            |
-| `test_buildUserMessage_without_issues`                   | No issues → message is just`PROMPT TO OPTIMIZE:\n<prompt>`                    |
-| `test_buildUserMessage_with_issues`                      | Issues are listed as bullets before the prompt                                   |
-| `test_callOptimizerLLM_sends_system_prompt_and_strips`   | The system prompt and issues are sent, and whitespace is stripped from the reply |
-| `test_optimizePrompt_computes_savings`                   | Token counts, tokens saved and percent saved are correct                         |
-| `test_optimizePrompt_never_negative`                     | A longer rewrite gives 0 saved, not a negative number                            |
-| `test_optimizePrompt_empty_prompt`                       | Empty prompt doesn't divide by zero                                              |
-| `test_optimizePrompt_default_issues`                     | `issues` defaults to an empty list                                             |
-| `test_formatComparisonTable_contains_prompts_and_counts` | Both prompts, counts, percent and headers are in the table                       |
-| `test_formatComparisonTable_wraps_long_prompts`          | Long prompts wrap and every line has the same width                              |
+| Test                                                       | Checks                                                                                  |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `test_countTokens_counts_nonempty_text`                  | Non-empty text gives > 0 tokens, empty string gives 0                                   |
+| `test_buildUserMessage_without_issues`                   | No issues → message is just`PROMPT TO OPTIMIZE:\n<prompt>`                           |
+| `test_buildUserMessage_with_issues`                      | Issues are listed as bullets before the prompt                                          |
+| `test_buildUserMessage_with_rejected_attempts`           | Rejected rewrites and their reasons appear between the issues and the prompt            |
+| `test_buildUserMessage_without_rejected_attempts`        | No rejected attempts → no rejection section                                            |
+| `test_optimizePrompt_forwards_rejected_attempts`         | Rejected attempts given to `optimizePrompt()` reach the LLM request                   |
+| `test_callOptimizerLLM_sends_system_prompt_and_strips`   | The system prompt and schema are sent, and whitespace is stripped from the rewrite      |
+| `test_optimizePrompt_computes_savings`                   | Token counts, tokens saved and percent saved are correct                                |
+| `test_optimizePrompt_unchanged_keeps_original`           | A prompt marked unchanged keeps the original text, even if the LLM rewrote it anyway    |
+| `test_optimizePrompt_unusable_reply_keeps_original`      | A refused, truncated or unparseable reply falls back to the original (parametrized)     |
+| `test_optimizePrompt_empty_rewrite_keeps_original`       | An empty rewrite is never returned                                                      |
+| `test_optimizePrompt_never_negative`                     | A longer rewrite gives 0 saved, not a negative number                                   |
+| `test_optimizePrompt_empty_prompt`                       | Empty prompt doesn't divide by zero                                                     |
+| `test_optimizePrompt_default_issues`                     | `issues` defaults to an empty list                                                    |
+| `test_formatComparisonTable_contains_prompts_and_counts` | Both prompts, counts, percent and headers are in the table                              |
+| `test_formatComparisonTable_wraps_long_prompts`          | Long prompts wrap and every line has the same width                                     |
+| `test_examples_are_consistent`                           | Each worked example agrees with itself, e.g. unchanged ones copy the input and list no edits (one case per example) |
+| `test_examples_include_unchanged_cases`                  | The examples include both rewritten and unchanged outcomes                              |
+| `test_code_example_keeps_code_block`                     | Code in an example survives the rewrite character for character                         |
+| `test_system_prompt_contains_examples`                   | Every example is rendered into the system prompt                                        |
+| `test_system_prompt_is_cacheable`                        | The system prompt is long enough to be cached, with margin                              |
+| `test_examples_do_not_reuse_main_cases`                  | No example reuses a prompt from the `__main__` cases                                  |
 
 ## Agent 3 — Validator (`validator.py`)
 
@@ -211,7 +252,8 @@ print(result.qualityScore, result.passed, result.reasoning)
 - **`passed` comes from the model, not the score:** a reply like `SCORE: 4` / `PASSED: Yes` counts as a pass. The rule "pass only at 6 or higher" is only enforced by the prompt
 - **A cut-off reply looks the same as a bad rewrite:** if the reply still runs past `max_tokens` (now 1024), there is no `SCORE:` line and the result is score 1 / fail. `stop_reason` isn't checked, so the caller can't tell the two apart
 - `qualityScore` is declared as `int`, but the parser returns a `float` (e.g. 8.0)
-- Model is hardcoded (`claude-sonnet-4-6`), same as Agent 2
+- Model is hardcoded (`claude-sonnet-4-6`). Agent 2 moved to `claude-sonnet-5-5` for structured outputs; moving Agent 3 the same way would replace the `SCORE:` / `PASSED:` / `REASON:` text parsing and fix the first three limitations in this list
+- The two prompts are sent as plain labeled text (`original prompt:` / `optimized prompt:`), not in tags, and the system prompt doesn't say to treat them as text only (Agent 2's does)
 - The validator is a single LLM judge, so the same pair of prompts can score slightly differently between runs. Scores close to 6 are the least reliable
 
 ### Tests (`tests/test_validator.py`, offline)
@@ -230,19 +272,63 @@ print(result.qualityScore, result.passed, result.reasoning)
 
 Live tests (`tests/test_validator_live.py`, run with `pytest -m live`, need `ANTHROPIC_API_KEY`): `test_filler_removal_passes`, `test_dropped_constraint_fails`.
 
-## Orchestrator (`orchestrator.py`)
+## Token counting (`tokens.py`)
 
-### Status: Pipeline working and tested offline, not run against the real API yet (10/1/2026)
+### Status: Working and tested offline, used by Agents 1 and 2 (10/2/2026)
 
 ### What it does
 
-`runPipeline(prompt)` runs Agent 1 → Agent 2 → Agent 3 on one prompt and returns an `OrchestrationResult` with:
+`countTokens(text, target)` counts tokens the way the LLM the user is prompting would, so the savings shown match what they are billed.
+
+| Target | How it's counted |
+| --- | --- |
+| `chatgpt` (default) | Locally with `tiktoken`, `o200k_base` encoding (GPT-4o and newer) |
+| `claude` | Anthropic's `count_tokens` endpoint (`claude-sonnet-5-5`), minus the message framing |
+
+### To test: pytest tests/test_tokens.py -v
+
+### Design decisions
+
+- **One function for every agent:** Agents 1 and 2 both import `countTokens` and `DEFAULT_TARGET` from here, so before/after counts always use the same tokenizer.
+- **Framing overhead is measured, not hardcoded:** `count_tokens` counts the user-turn wrapper as well as the text. `claudeMessageOverhead()` measures it once with a one-token message and subtracts it, so only the prompt's own tokens are returned.
+- **Falls back instead of failing:** if the Claude call raises `APIError`, a warning is logged and the local `o200k_base` count is used as an estimate.
+- **Cached (`lru_cache`, 1024 entries):** the Auditor and the Optimizer both count the original prompt, and that costs one API call, not two.
+- **Empty text is 0 with no API call, and an unknown target raises `ValueError`.**
+
+### Known limitations / things to revisit
+
+- A fallback estimate is cached like a real count, so after one failed Claude call that text keeps its `tiktoken` estimate for the rest of the process
+- `chatgpt` assumes `o200k_base` for every ChatGPT model
+- Each distinct text costs one `count_tokens` request when the target is `claude`
+- This module creates its own Anthropic client, as do the three agents (four clients in total)
+
+### Tests (`tests/test_tokens.py`, offline)
+
+The fake client's `count_tokens` returns one token per word plus a fixed framing amount. Caches are cleared before every test.
+
+| Test | Checks |
+| --- | --- |
+| `test_countTokens_chatgpt_uses_o200k` | ChatGPT counts match `o200k_base` |
+| `test_countTokens_empty_text` | Empty text is 0 tokens and makes no API call |
+| `test_countTokens_claude_subtracts_overhead` | Claude counts come from `count_tokens`, minus the framing overhead |
+| `test_countTokens_claude_is_cached` | Counting the same prompt twice calls the API once |
+| `test_countTokens_claude_falls_back_on_api_error` | A failed `count_tokens` call gives the local estimate instead of crashing |
+| `test_countTokens_unknown_target` | An unknown target raises `ValueError` |
+
+## Orchestrator (`orchestrator.py`)
+
+### Status: Pipeline working and tested offline. Target-aware, retries carry the rejected rewrite (10/4/2026)
+
+### What it does
+
+`runPipeline(prompt, target="chatgpt")` runs Agent 1 → Agent 2 → Agent 3 on one prompt and returns an `OrchestrationResult` with:
 
 - The original prompt and the final prompt (the rewrite if one passed, otherwise the original)
 - `wasOptimized`: whether the final prompt is a rewrite
 - The `AuditResult` from Agent 1
 - `attempts`: the `ValidationResult` of every rewrite that was validated, in order
-- Tokens saved and percent saved (0 when the original is returned)
+- Tokens saved and percent saved (0 when the original is returned), counted with the target's tokenizer
+- `changes`: Agent 2's list of edits for the accepted rewrite
 
 The steps:
 
@@ -250,7 +336,7 @@ The steps:
 2. Agent 2 rewrites the prompt using Agent 1's issues.
 3. If the rewrite saves no tokens (unchanged or longer), the loop stops and the original is returned.
 4. Agent 3 checks the rewrite against the original. If it passes, the rewrite is returned and the loop stops.
-5. If it fails, Agent 3's reason is added to the issue list ("Optimizer attempt 1 was rejected by the Validator: ...") and Agent 2 tries again, up to `MAX_OPTIMIZATION_ATTEMPTS` (3) attempts in total.
+5. If it fails, the rewrite and Agent 3's reason are stored as a `RejectedAttempt` and Agent 2 tries again with every rejected attempt so far, up to `MAX_OPTIMIZATION_ATTEMPTS` (3) attempts in total.
 6. If no attempt passes, the original prompt is returned.
 
 ### To test: pytest tests/test_orchestrator.py -v
@@ -265,6 +351,8 @@ python -m agents.orchestrator
 
 `python agents/orchestrator.py` does not work (see the first row of the bugs table).
 
+The run prints the original and final prompt, the audit severity and issues, then a JSON summary: one entry per attempt (score, passed, reason) plus `changes`, `tokensSaved` and `percentSaved` when a rewrite was accepted.
+
 ### Example
 
 ```python
@@ -276,16 +364,19 @@ result = runPipeline("Please, could you kindly help me write a short story? I wo
 print(result.finalPrompt, result.wasOptimized)
 for attempt in result.attempts:
     print(attempt.qualityScore, attempt.passed, attempt.reasoning)
-print(result.tokensSaved, result.percentSaved)
+print(result.tokensSaved, result.percentSaved, result.changes)
 ```
+
+Pass `target="claude"` to count with Claude's tokenizer.
 
 ### Design decisions
 
 - **Skip Agents 2 and 3 when Agent 1 finds nothing:** same "don't waste tokens to save tokens" idea as Agent 1. A clean prompt costs no LLM calls (unless it is over 500 tokens, where Agent 1 runs its own LLM review).
 - **The original is returned when nothing passes:** a rewrite that Agent 3 rejected is never returned, even if it saves tokens. Getting the same result for more tokens is better than a different result for fewer.
-- **Retries include the Validator's reason:** the rejection reason is passed to Agent 2 as one more issue, so the next attempt knows what the last one broke instead of producing the same rewrite again.
+- **Retries include the rejected rewrite and the Validator's reason:** each failed attempt is passed to Agent 2 as a `RejectedAttempt(rewrite, reason)`, and every earlier rejection is sent, not just the latest. The next attempt sees exactly what it wrote and what that broke. (Before 10/2 only the reason was passed, as one more line in the issue list.)
+- **The target is forwarded to Agents 1 and 2:** both count with the same tokenizer, so the audit's token count and the reported savings are consistent. Agent 3 doesn't count tokens, so it doesn't take a target.
 - **Stop at the first pass:** no further calls are made once a rewrite passes.
-- **Retry feedback goes into a copy of the issue list:** `issues = list(auditResult.issues)`, so the `AuditResult` on the result still holds only what Agent 1 found.
+- **Retry feedback is kept apart from the audit issues:** rejections live in their own `rejectedAttempts` list, and Agent 2 gets a copy of it on each call, so the `AuditResult` on the result still holds only what Agent 1 found.
 - **Same structure as the agents:** one plain function plus a data-only `OrchestrationResult` dataclass.
 
 ### Bugs encountered + fixes
@@ -300,84 +391,92 @@ print(result.tokensSaved, result.percentSaved)
 ### Known limitations / things to revisit
 
 - **`passed` is taken from Agent 3 as-is:** a reply like `SCORE: 4` / `PASSED: yes` makes the orchestrator return that rewrite (see Agent 3's limitations and next step 3)
-- **A reply that can't be parsed is handled as a rejection:** the reason "Could not parse Agent 3, Validator, response." is passed to Agent 2 as an issue on the next attempt, which tells it nothing about the rewrite
-- **No handling of API errors:** a rate limit or network error in any agent raises out of `runPipeline()`. It should return the original prompt instead
+- **A reply that can't be parsed is handled as a rejection:** the reason "Could not parse Agent 3, Validator, response." is passed to Agent 2 as a rejected attempt, under a heading that says the rewrite was rejected for changing the prompt's meaning. The retry is then told to fix a problem that doesn't exist
+- **No handling of API errors:** a rate limit or network error in any agent raises out of `runPipeline()`. It should return the original prompt instead. Only `tokens.py` catches `APIError` today
 - **`.env` is not loaded:** none of the agents call `load_dotenv()`, so the key has to be exported in the shell. Without it the first Claude call fails with "Could not resolve authentication method"
-- **A failed optimization costs more than it could save:** 3 attempts are 6 LLM calls (7 if Agent 1 ran its LLM review). `MAX_OPTIMIZATION_ATTEMPTS = 3` is a guess and should be tuned on real prompts
+- **A failed optimization costs more than it could save:** 3 attempts are 6 LLM calls (7 if Agent 1 ran its LLM review), all in sequence before the user gets an answer. `MAX_OPTIMIZATION_ATTEMPTS = 3` is a guess and should be tuned on real prompts
+- **No minimum saving:** only a rewrite that saves 0 tokens is skipped. One that saves 1 or 2 tokens still costs a Validator call and is offered to the user
 - **Whether to optimize depends only on Agent 1's rule checks for prompts under 500 tokens:** e.g. `"Please, could you kindly help me write a short story about a dragon? Thank you so much!"` has 2 filler hits (the threshold is 3), so no issue is flagged and the prompt is returned as-is
 - **No cost on the result:** the docstring mentions cost savings, but `OrchestrationResult` only has `tokensSaved` and `percentSaved`
 - **The rewrite is only kept for attempts that were validated:** a rewrite dropped for saving no tokens is not recorded in `attempts`
 - `import os` and `OptimizationResult` are imported but not used
 - No live test of the full pipeline yet
+- Nothing in `backend/` or the extension calls `runPipeline()` yet
 
 ### Tests (`tests/test_orchestrator.py`, offline)
 
 | Test | Checks |
 | --- | --- |
 | `test_runPipeline_no_issues_skips_optimization` | No audit issues → original returned, Agents 2 and 3 not called, no attempts |
-| `test_runPipeline_first_attempt_passes` | A rewrite that passes first time becomes `finalPrompt`. Agent 1's issues are passed to Agent 2, and the savings are copied from Agent 2's result |
-| `test_runPipeline_retries_with_validator_feedback` | A rejected rewrite is retried, and the second call to Agent 2 gets the Validator's reason (with the attempt number) as an extra issue |
+| `test_runPipeline_first_attempt_passes` | A rewrite that passes first time becomes `finalPrompt` and the loop stops |
+| `test_runPipeline_forwards_target` | The target is passed to the Auditor and the Optimizer |
+| `test_runPipeline_defaults_to_chatgpt` | Without a target, the pipeline uses `chatgpt` |
+| `test_runPipeline_retries_with_validator_feedback` | A rejected rewrite is retried, and Agent 2 gets that rewrite and the Validator's reason |
+| `test_runPipeline_passes_all_rejected_attempts` | Every earlier rejection is passed on, not just the latest one |
 | `test_runPipeline_does_not_mutate_audit_issues` | The retry feedback is not added to `auditResult.issues` |
 | `test_runPipeline_all_attempts_fail_returns_original` | After `MAX_OPTIMIZATION_ATTEMPTS` rejections the original is returned with `wasOptimized = False` and 0 saved |
 | `test_runPipeline_respects_max_attempts` | With the limit set to 1, Agent 2 is called once |
 | `test_runPipeline_no_savings_returns_original` | A rewrite that is unchanged or longer (2 cases) is not validated, retried or returned |
 
-Current result: `33 passed, 2 deselected` across all four offline test files. The 2 deselected are the live validator tests.
+Current result: `63 passed, 2 deselected` across all five offline test files (auditor 6, optimizer 31, validator 9, orchestrator 11, tokens 6). The 2 deselected are the live validator tests.
 
 ---
 
 ## Next steps (with examples)
 
-**1. Run the pipeline against the real API.** Nothing in the orchestrator has been run live yet. Export the key, then:
+Updated 10/4/2026. Done since the last version of this list:
 
-```
-python -m agents.orchestrator
-pytest -m live
-```
+- ~~Use exact Claude token counts~~ → `tokens.py` (`target="claude"`).
+- ~~Check the rewrite for a preamble before validating it~~ → no longer needed; the Optimizer's structured output puts the rewrite in its own field.
+- ~~Create the pricing config~~ → `config/prices.yaml` exists. Reading it is still open (step 7).
 
-Check that Agent 3's reply reaches the `SCORE:` line with `max_tokens=1024`, and add a live orchestrator test (the filler prompt must come back shorter, a prompt with a word limit must keep it).
-
-**2. Handle errors in the orchestrator.** Return the original prompt if an agent raises, and don't feed a parse failure back to Agent 2 as an issue:
+**1. Handle errors in the orchestrator.** Return the original prompt if an agent raises:
 
 ```python
 try:
-    optimizationResult = optimizePrompt(prompt, issues)
+    optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
+                                        rejectedAttempts=list(rejectedAttempts))
     validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
 except anthropic.APIError:
     break  # falls through to returning the original
 ```
 
-**3. Decide `passed` from the score in Agent 3.** Right now the model's `PASSED:` line is trusted even when it contradicts the score, and the orchestrator acts on it:
+**2. Move Agent 3 to structured output, like Agent 2.** This fixes three things at once: a cut-off reply no longer looks like a bad rewrite, a parse failure is no longer fed back to Agent 2 as a rejection reason, and `passed` can be computed from the score instead of trusted from the model:
 
 ```python
-passed = score >= 6
+class Verdict(BaseModel):
+    requirements: list[str]   # READ
+    losses: list[str]         # ANSWER + CITE
+    reasoning: str            # THINK
+    score: int
+    reason: str
+
+passed = verdict.score >= 6
 ```
 
-**4. Check the rewrite before validating it.** Catch the model breaking the "only return the prompt" rule without spending an Agent 3 call, e.g.:
+**3. Fix the Auditor's rule checks**, since for prompts under 500 tokens they alone decide whether anything gets optimized. Match filler words on word boundaries, and skip the ratio check for prompts that contain code or URLs:
 
 ```python
-if optimizedPrompt.lower().startswith(("here's", "here is", "optimized prompt")):
-    ...  # retry once, or fall back to the original
+filler_hits = sum(len(re.findall(rf"\b{re.escape(w)}\b", text.lower())) for w in filler_words)
 ```
 
-**5. Create `config/pricing.yaml` + `services/cost_calculator.py`** so the agents use real per-model rates instead of the placeholder, and add cost saved to `OrchestrationResult`:
-
-```yaml
-claude-sonnet-4-6:
-  input_per_million: 3.00
-  output_per_million: 15.00
-```
-
-**6. Use exact Claude token counts where possible.** `testing_agent.py` already tries the API's token-counting endpoint, which could replace the `tiktoken` estimate (costs an API call, so maybe only for the final numbers):
+**4. Add a minimum saving** in the orchestrator, so a rewrite that saves a token or two isn't validated or shown:
 
 ```python
-client.messages.count_tokens(model=MODEL, messages=[{"role": "user", "content": prompt}]).input_tokens
+if optimizationResult.percentSaved < MIN_PERCENT_SAVED:
+    break
 ```
 
-**7. Load the API key from `.env`** (`load_dotenv()`, as `testing_agent.py` does) so the agents run without exporting the key first.
+**5. Run the pipeline against the real API and turn the `__main__` cases into a live suite.** The Optimizer's 10 edge cases already print PASS/FAIL. As `pytest -m live` tests they could also record which attempt passed, tokens saved and latency. That gives real numbers for the open guesses: `MAX_OPTIMIZATION_ATTEMPTS`, the 1.6 ratio, the filler threshold of 3, and the pass score of 6. Also confirm that Agent 3's reply reaches the `SCORE:` line with `max_tokens=1024`.
 
-**8. Tune `MAX_OPTIMIZATION_ATTEMPTS`.** Log how often attempt 2 or 3 passes after attempt 1 failed. If it is rare, lower the limit to 2.
+**6. Connect the pipeline to the backend.** Add an endpoint that calls `runPipeline(prompt, target)` and saves the result, so the extension can use it.
 
-**9. Add more live test cases for Agent 3** (dropped example, changed audience, a borderline rewrite) so changes to the prompt or model are checked against more than two cases. Once the model moves to config, run the live tests before switching models.
+**7. Read rates from `config/prices.yaml`** instead of the flat rate in `estimateCost()`, add `claude-sonnet-5-5` to the file, and add cost saved to `OrchestrationResult`.
 
-**10. Cleanup (team decisions):** pick one naming convention (camelCase vs snake_case), move the `"""..."""` blocks above functions into docstrings to raise the pylint score, then raise `fail-under` back up from 4.0.
+**8. Load the API key from `.env`** (`load_dotenv()`, as `testing_agent.py` does) so the agents run without exporting the key first.
+
+**9. One shared client and one place for model names.** Four modules each create an Anthropic client, and the model is `claude-sonnet-4-6` in two of them and `claude-sonnet-5-5` in the other two.
+
+**10. Add more live test cases for Agent 3** (dropped example, changed audience, a borderline rewrite) so changes to the prompt or model are checked against more than two cases.
+
+**11. Cleanup (team decisions):** pick one naming convention (camelCase vs snake_case), move the `"""..."""` blocks above functions into docstrings to raise the pylint score, then raise `fail-under` back up from 4.0.

@@ -1,3 +1,4 @@
+import json
 import os
 from dataclasses import dataclass, field
  
@@ -117,9 +118,20 @@ if __name__ == "__main__":
     print()
     print("Audit issues:", result.auditResult.issues)
     print()
-    print(f"Attempts: {len(result.attempts)}")
-    for i, attempt in enumerate(result.attempts, start=1):
-        print(f"  Attempt {i}: score={attempt.qualityScore}, passed={attempt.passed}, reason={attempt.reasoning}")
+    summary = {
+        "attempts": [
+            {
+                "attempt": i,
+                "score": attempt.qualityScore,
+                "passed": attempt.passed,
+                "reason": attempt.reasoning,
+            }
+            for i, attempt in enumerate(result.attempts, start=1)
+        ],
+    }
     if result.wasOptimized:
-        print("Changes:", result.changes)
-        print(f"Tokens saved: {result.tokensSaved} ({result.percentSaved}%)") 
+        summary["changes"] = result.changes
+        summary["tokensSaved"] = result.tokensSaved
+        summary["percentSaved"] = result.percentSaved
+    print(json.dumps(summary, indent=2))
+    print()

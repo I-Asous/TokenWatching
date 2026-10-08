@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import UUID4
 
 from repository import prompts as prompt_repository
 from schema.prompts import Prompt, PromptCreate
@@ -9,7 +8,7 @@ router = APIRouter()
 
 # return a specific users original prompts
 @router.get("/users/{user_id}/prompts", response_model=list[Prompt])
-def read_user_prompts(user_id: UUID4):
+def read_user_prompts(user_id: str):
     try:
         return prompt_repository.get_user_input_prompts(user_id)
     except RuntimeError as exc:
@@ -17,7 +16,7 @@ def read_user_prompts(user_id: UUID4):
 
 # return a specific users 1 prompt
 @router.get("/users/{user_id}/prompt/{prompt_id}")
-def read_user_prompt_with_optimized(user_id: UUID4, prompt_id: int):
+def read_user_prompt_with_optimized(user_id: str, prompt_id: int):
     try:
         result = prompt_repository.get_user_input_prompt(user_id, prompt_id)
     except RuntimeError as exc:

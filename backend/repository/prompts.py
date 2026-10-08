@@ -1,5 +1,3 @@
-from pydantic import UUID4
-
 from schema.prompts import PromptCreate
 
 from repository.client import supabase
@@ -10,7 +8,7 @@ from repository.client import supabase
 
 ## this may seem redundant but i decided to implement all of them, but imo i think if we want to see a prompt, we will def want to see the optimized version alongside it as well :/
 # return a specific users original prompts
-def get_user_input_prompts(user_id: UUID4) -> list[dict]:
+def get_user_input_prompts(user_id: str) -> list[dict]:
    try:
       response = supabase.table("prompt").select("*").eq("user_id", str(user_id)).execute()
       # if there is data, return it
@@ -22,7 +20,7 @@ def get_user_input_prompts(user_id: UUID4) -> list[dict]:
       raise RuntimeError(f"Database error: {str(e)}")
 
 # return a specific users 1 prompt
-def get_user_input_prompt(user_id: UUID4, prompt_id: int):
+def get_user_input_prompt(user_id: str, prompt_id: int):
    try:
       response = supabase.table("prompt").select("*").eq("user_id", str(user_id)).eq("prompt_id", prompt_id).execute()
       # if there is data, return it
@@ -51,7 +49,7 @@ def create_prompt(prompt: PromptCreate) -> list[dict]:
 # delete prompt (which also should delete the optimized prompt who is with me!)
 def delete_prompt(prompt_id: int):
    try:
-      response = supabase.table("prompt").delete().eq("id", prompt_id).execute()
+      response = supabase.table("prompt").delete().eq("prompt_id", prompt_id).execute()
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
       return response.data
@@ -59,5 +57,4 @@ def delete_prompt(prompt_id: int):
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")
 
-# update prompt/optimized prompt: not sure as a now? i thikn if the user modifies the original prompt. but i think that should just not be able to go thru...
-# this can just be an upsert
+

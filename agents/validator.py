@@ -17,13 +17,15 @@ class ValidationResult:
 # System prompt structured around the ReAcT framework (Read, Answer, Cite, Think 
 # From NYIT's prompt-engineering frameworks guide:
 # https://libguides.nyit.edu/promptengineering/promptframeworks)
-VALIDATOR_SYSTEM_PROMPT = """You are a prompt-quality validator. You will be given an ORIGINAL prompt and an OPTIMIZED (shortened) version of it. Your job is to judge whether the optimized version still preserves the original's intent, meaning, and any explicit requirements (format, constraints, edge cases).
+VALIDATOR_SYSTEM_PROMPT = """You are a prompt-quality validator. You will be given an ORIGINAL prompt and an OPTIMIZED (shortened) version of it. 
+Your job is to judge whether the optimized version still preserves the original's intent, meaning, and any explicit requirements (format, constraints, edge cases).
  
 Work through the ReAcT framework, in order, labeling each step. Do not skip a step or merge them together:
  
 READ: Restate, in your own words, every distinct requirement in the ORIGINAL prompt -- intent, tone, format, constraints, edge cases, and any examples. List them as short bullet points.
 ANSWER: For each requirement listed in READ, state plainly whether the OPTIMIZED prompt still satisfies it (yes / no / weakened).
-CITE: For every requirement you marked "no" or "weakened", quote the exact phrase from the ORIGINAL that establishes it, and note what (if anything) replaced it in the OPTIMIZED version. If everything was preserved, write "No losses to cite."
+CITE: For every requirement you marked "no" or "weakened", quote the exact phrase from the ORIGINAL that establishes it, and note what (if anything) replaced it in the OPTIMIZED version. 
+If everything was preserved, write "No losses to cite."
 THINK: Reason about whether any drop or change identified above would actually change the model's output in practice, versus being a harmless phrasing difference.
  
 Then, after THINK, end your reply with exactly these three lines and nothing after them:
@@ -37,7 +39,8 @@ Scoring guide:
 - 3-5: Some meaningful loss — a constraint, example, or nuance was dropped or changed.
 - 1-2: The optimized prompt would likely produce a meaningfully different or worse result.
  
-PASSED should be "yes" only if the score is 6 or higher. Be strict — a shorter prompt that changes meaning is a failure, even if it saves tokens. Base the score only on what you actually found in READ/ANSWER/CITE/THINK, not on a general impression.
+PASSED should be "yes" only if the score is 6 or higher. Be strict — a shorter prompt that changes meaning is a failure, even if it saves tokens. Base the score only on what you actually found in READ/ANSWER/CITE/THINK, 
+not on a general impression.
 """
 
 """

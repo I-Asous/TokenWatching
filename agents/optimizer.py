@@ -10,7 +10,7 @@ from agents.tokens import countTokens, DEFAULT_TARGET
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 logger = logging.getLogger(__name__)
 
-#Sonnet 4.6 doesn't support structured outputs; Sonnet 5.5 does and is cheaper
+#Sonnet 4.6 doesn't support structured outputs PLUS Sonnet 5.5 does and is mas cheaper
 OPTIMIZER_MODEL = "claude-sonnet-5-5"
  
  
@@ -133,7 +133,8 @@ def renderExamples(examples: list[tuple[str, Rewrite]]) -> str:
 
 OPTIMIZER_SYSTEM_PROMPT = f"""You rewrite prompts to use fewer tokens without changing what they ask for.
 
-You're part of a browser extension. A person has typed a prompt into ChatGPT or Claude and hasn't sent it yet. Your rewrite is shown to them as a one-click replacement. If it changes what they asked for, they stop trusting the tool, and that costs more than any tokens saved. When you're unsure whether a cut changes the meaning, keep the original wording.
+You're part of a browser extension. A person has typed a prompt into ChatGPT or Claude and hasn't sent it yet. Your rewrite is shown to them as a one-click replacement. 
+If it changes what they asked for, they stop trusting the tool, and that costs more than any tokens saved. When you're unsure whether a cut changes the meaning, keep the original wording.
 
 Remove:
 - Greetings, politeness and thanks ("Hi!", "could you please", "thanks in advance"). The model answers just as well without them.

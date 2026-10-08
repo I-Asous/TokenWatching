@@ -1,11 +1,11 @@
 from typing import Any
 from datetime import datetime
 
-from pydantic import UUID4, BaseModel, Field
+from pydantic import BaseModel, Field
 
 class Prompt(BaseModel):
     prompt_id: int
-    user_id: UUID4
+    user_id: str
     txt_prompt: str
     tokens: int = Field(ge=0)
     inputted_at: datetime
@@ -13,7 +13,7 @@ class Prompt(BaseModel):
     context: list[Any] = Field(default_factory=list)
 
 class PromptCreate(BaseModel):
-    user_id: UUID4
+    user_id: str
     txt_prompt: str
     tokens: int = Field(ge=0)
     context: list[Any] = Field(default_factory=list)

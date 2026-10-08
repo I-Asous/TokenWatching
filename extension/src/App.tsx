@@ -38,12 +38,6 @@ function App() {
 
       <Show when="signed-out">
         <div className="Board1">
-                <Navbar active={tab} onChange={setTab} />
-
-      {tab === 'stats' && <Stats />}
-      {tab === 'prompt' && <Chatbox />}
-      {tab === 'history' && <History />}
-      
           {mode === 'sign-in' ? <SignIn routing="hash" /> : <SignUp routing="hash" />}
 
           <div className="buttons">
