@@ -3,5 +3,5 @@ pydantic
 python-dotenv
 tiktoken
 fastapi[standard]==0.115.6
-supabase==2.31.0
+supabase==2.32.0
 email-validator
