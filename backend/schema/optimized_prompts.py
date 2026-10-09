@@ -11,9 +11,17 @@ class OptimizedPrompt(BaseModel):
     txt_prompt: str
     tokens: int = Field(ge=0)
     created_at: datetime
+    changes: list[str] | None = None
+    preserved_constraints: list[str] | None = None
+    agent_tokens_used: int | None = None
+    parent_id: int | None = None
 
 class OptimizedPromptCreate(BaseModel):
     user_id: str
     org_prompt_id: int
     txt_prompt: str = Field(min_length=1)
     tokens: int = Field(ge=0)
+    changes: list[str] | None = None
+    preserved_constraints: list[str] | None = None
+    agent_tokens_used: int | None = None
+    parent_id: int | None = None
