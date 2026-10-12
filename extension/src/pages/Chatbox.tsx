@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 
 function Chatbox() {
   const [promptValue, setPromptValue] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sendMessage, setSendMessage] = useState("");
+  const [sendError, setSendError] = useState("");
 
   useEffect(() => {
     // 1. Find the active tab when Chatbox loads
@@ -24,6 +27,54 @@ function Chatbox() {
     });
   }, []);
 
+const GUEST_USER_ID = "00e5e341-5160-4908-9648-802a17def3ce";
+
+async function getGuestUserId() {
+  return GUEST_USER_ID;
+}
+
+  async function sendPrompt() {
+    const txtPrompt = promptValue.trim();
+    if (!txtPrompt) {
+      setSendError("Enter a prompt first.");
+      setSendMessage("");
+      return;
+    }
+
+    setIsSending(true);
+    setSendError("");
+    setSendMessage("");
+
+    try {
+      const userId = await getGuestUserId();
+      const response = await fetch("http://127.0.0.1:8000/prompts/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          txt_prompt: txtPrompt,
+          tokens: 0,
+          context: [],
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.detail ?? `Backend request failed (${response.status}).`);
+      }
+
+      setSendMessage("The backend received prompt.");
+    } catch (error) {
+      setSendError(
+        error instanceof Error
+          ? error.message
+          : "Could not reach the backend",
+      );
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   return (
     <div>
       <div className="Board1">
@@ -36,6 +87,18 @@ function Chatbox() {
           placeholder='Ex: Write me an email telling my boss that Ill be late to work due to an emergency at work'
           onChange={(e) => setPromptValue(e.target.value)}
         />
+        <div className="buttons">
+          <button
+            type="button"
+            className="app-button"
+            onClick={sendPrompt}
+            disabled={isSending}
+          >
+            {isSending ? "Sending..." : "test"}
+          </button>
+        </div>
+        {sendMessage && <p role="status">{sendMessage}</p>}
+        {sendError && <p role="alert">{sendError}</p>}
       </div>
     </div>
   );
