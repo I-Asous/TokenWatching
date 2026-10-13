@@ -1,6 +1,6 @@
 from schema.prompts import PromptCreate
 
-from repository.client import supabase
+from repository.client import get_supabase
 
 
 ### GET METHODS
@@ -10,7 +10,7 @@ from repository.client import supabase
 # return a specific users original prompts
 def get_user_input_prompts(user_id: str) -> list[dict]:
    try:
-      response = supabase.table("prompt").select("*").eq("user_id", str(user_id)).execute()
+      response = get_supabase().table("prompt").select("*").eq("user_id", str(user_id)).execute()
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
       # AND HANDLE ONLY 1 PROMPT VS MULTIPLE
@@ -22,7 +22,7 @@ def get_user_input_prompts(user_id: str) -> list[dict]:
 # return a specific users 1 prompt
 def get_user_input_prompt(user_id: str, prompt_id: int):
    try:
-      response = supabase.table("prompt").select("*").eq("user_id", str(user_id)).eq("prompt_id", prompt_id).execute()
+      response = get_supabase().table("prompt").select("*").eq("user_id", str(user_id)).eq("prompt_id", prompt_id).execute()
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
       return response.data[0] if response.data else None
@@ -37,7 +37,7 @@ def get_user_input_prompt(user_id: str, prompt_id: int):
 # prompt needs to be properly defined
 def create_prompt(prompt: PromptCreate) -> list[dict]:
    try:
-      response = supabase.table("prompt").insert(prompt.model_dump(mode="json")).execute()
+      response = get_supabase().table("prompt").insert(prompt.model_dump(mode="json")).execute()
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
       return response.data
@@ -49,7 +49,7 @@ def create_prompt(prompt: PromptCreate) -> list[dict]:
 # delete prompt (which also should delete the optimized prompt who is with me!)
 def delete_prompt(prompt_id: int):
    try:
-      response = supabase.table("prompt").delete().eq("prompt_id", prompt_id).execute()
+      response = get_supabase().table("prompt").delete().eq("prompt_id", prompt_id).execute()
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
       return response.data
