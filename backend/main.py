@@ -1,17 +1,12 @@
-import os
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from auth import ALLOWED_ORIGINS
 from routes.endpoints import router
-
-# Allowed origins
-EXTENSION_ORIGIN = "chrome-extension://imjnnfejbooilgjlllcnkghkckcbmgdn"
-extra_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[EXTENSION_ORIGIN, *extra_origins], 
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
     allow_credentials=False,
