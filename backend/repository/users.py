@@ -2,14 +2,14 @@ from pydantic import UUID4
 
 from schema.users import AuthUserResponse, CreateUser, UpdateUser
 
-from repository.client import supabase
+from repository.client import get_supabase
 
 
 # create a new user
 def create_user(user: CreateUser) -> AuthUserResponse:
    try:
       # NEED TO INCLUDE OTHER INFO (username) LATER!
-      response = supabase.auth.sign_up({
+      response = get_supabase().auth.sign_up({
          "email": user.email,
          "password": user.hashed_password,
          "options": {"data": {"username": user.username}}
@@ -26,7 +26,7 @@ def create_user(user: CreateUser) -> AuthUserResponse:
 ## since enzo is security guy, lets discuss how we should do this bc in a real app they have like secuirty measures to prevent accidental deletion
 def delete_user(user_id: UUID4):
    try:
-      response = supabase.auth.admin.delete_user(str(user_id))
+      response = get_supabase().auth.admin.delete_user(str(user_id))
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
       return response
@@ -40,7 +40,7 @@ def delete_user(user_id: UUID4):
 def update_user(user: UpdateUser, user_id: UUID4):
    try:
       
-      response = supabase.auth.admin.update_user_by_id(str(user_id), user.model_dump(exclude_unset=True, exclude_none=True, mode="json"))
+      response = get_supabase().auth.admin.update_user_by_id(str(user_id), user.model_dump(exclude_unset=True, exclude_none=True, mode="json"))
       print(response)
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
