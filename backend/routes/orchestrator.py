@@ -8,7 +8,7 @@ router = APIRouter()
 # this is a route that should be able to call the orchestrator of the 
 # ai agents and be able to return the final result of the orchestrator, 
 # and any messages in between!
-@router.get("/orchestrator", response_model=OrchestrationResult)
+@router.post("/orchestrator", response_model=OrchestrationResult)
 def orchestrator(prompt: str, target: str): # idk what target is!
     try:
         return orchestrator_service(prompt, target)
