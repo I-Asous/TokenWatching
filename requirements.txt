@@ -2,7 +2,7 @@ anthropic
 pydantic
 python-dotenv
 tiktoken
-fastapi[standard]==0.142.2
+fastapi[standard]==0.143.0
 supabase==2.31.0
 email-validator
 pyjwt[crypto]
