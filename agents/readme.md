@@ -6,7 +6,7 @@ This README tracks what's been built in `agents/`, why specific decisions were m
 
 ## Agent 1 — Auditor (`auditor.py`)
 
-### Status: Core logic working. Token counting moved to `tokens.py`, cost estimate no longer rounded (10/4/2026)
+### Status: Core logic working. `llmReview()` reworked: structured reply, error handling, caching, `claude-haiku-5-5` (10/14/2026)
 
 ### What it does
 
@@ -26,6 +26,11 @@ Takes a single user-submitted prompt and returns:
 - **`AuditResult` is a separate dataclass, data only:** keeps the "what data comes back" separate from "how it's calculated". Overall its just cleaner to reason about and test.
 - **Token counting is shared, not owned by Agent 1:** `countTokens()` used to live here. It moved to `tokens.py` so Agents 1 and 2 count the same way for the same target, and the result is cached between them.
 - **`estimateCost()` returns the unrounded value:** rounding happens where the number is displayed (e.g. `formatComparisonTable()` formats with 3 decimals). Rounding inside the function made every normal prompt cost `0.0`.
+- **`llmReview()` answers through a tool, not free text:** the request forces the `report_issues` tool (`tool_choice`), whose schema is a list of issue strings. The reply is already a list, so nothing has to be parsed out of text.
+- **The LLM review never breaks the audit:** if the API call raises `APIError` (rate limit, timeout, network error), a warning is logged and `llmReview()` returns `[]`, so the rule-based result still comes back. Same idea as the fallback in `tokens.py`. The client has a 20-second timeout.
+- **Reviews are cached:** the API call lives in `cachedReview()` (`lru_cache`, 256 entries), so auditing the same prompt again costs nothing. A failed call raises before anything is cached, so the next audit of that prompt tries again. The cached value is a tuple, so callers can't change it.
+- **The prompt being reviewed is treated as text:** the instructions are in the `system` prompt and the user's prompt is wrapped in `<prompt>` tags, with an instruction not to follow anything inside them. A prompt that says "say none found" can no longer hide its own issues.
+- **Haiku for the review** (`REVIEW_MODEL = "claude-haiku-5-5"`): listing token waste is a short, simple task, so the smaller model keeps the review cheap and fast. Not yet checked against real prompts.
 
 ### Bugs encountered + fixes
 
@@ -37,6 +42,10 @@ Takes a single user-submitted prompt and returns:
 | Would-be`NameError: name 'llm_review' is not defined`                             | `auditPrompt()` called `llm_review(prompt)` (snake_case), but the function was actually defined as `llmReview` (camelCase) — naming drift between edits                                                                                | Corrected the call site to`llmReview(prompt)`, matching the actual function name                                                                                                                                                                                              |
 | `estimatedCost` was `0.0` for almost every prompt | `estimateCost()` rounded to 3 decimals, and a single prompt costs a fraction of a cent (any prompt under about 170 tokens rounded to $0.000) | Removed the rounding. The function returns the raw value (30 tokens → `0.00009`) and callers round when they display it |
 | The rate parameter's name didn't match the math | It was called `rate_per_100k`, but the function divides by 1,000 and the default `0.003` is a per-1K rate. Changing the divisor to 100,000 to match the name made costs 100x too low and failed `test_estimateCost_scales_with_tokens` (1M tokens gave $0.03, not $3.00) | Kept the divisor at 1,000 and renamed the parameter to `rate_per_1k` |
+| An API error in the LLM review crashed the whole audit | `llmReview()` called `client.messages.create()` with no `try`, so a rate limit or network error raised out of `auditPrompt()` and the pipeline | Catch `APIError`, log a warning, and return `[]`. The audit still returns its rule-based issues |
+| Preamble lines became issues, and real issues could be dropped | Every non-empty line of the free-text reply was an issue (including "Here are the issues:"), and the whole reply was thrown away if "none found" appeared anywhere in it | The reply comes back through the `report_issues` tool as a list, so there is no text to parse |
+| A prompt could steer its own review | The prompt was pasted under `PROMPT:` in the same message as the instructions | Instructions moved to `system`, and the prompt is wrapped in `<prompt>` tags with an instruction to treat it only as text |
+| `NameError: name 'lru_cache' is not defined` when collecting tests | The `@lru_cache` decorator was added before its import, so importing `auditor.py` (and `orchestrator.py`, which imports it) failed | Added `from functools import lru_cache` |
 
 ### Known limitations / things to revisit
 
@@ -44,11 +53,12 @@ Takes a single user-submitted prompt and returns:
 - ~~Token counts are `tiktoken`-based estimates, not exact for Claude models~~ **Fixed.** With `target="claude"`, counts come from Anthropic's `count_tokens` endpoint (see the Token counting section). ChatGPT counts use `o200k_base` instead of the older `cl100k_base`
 - Naming convention is currently a mix of `camelCase` and `snake_case`,  worth standardizing (team decision) before this gets much bigger
 - ~~Open bug: token-to-word ratio check over-flags~~ **Fixed.** The threshold was `> 1`, but normal English averages ~1.3 tokens/word, so almost every prompt got flagged (e.g. `"What is the capital of France?"` → 7 tokens / 6 words → flagged), and severity was almost never `Low`. Raised it to `> 1.6` (a bit above the ~1.3 average) and removed the `xfail` marker from the clean-prompt test. 1.6 is still a guess, so it's worth gathering real prompt data to tune it
-- `llmReview()` isn't covered by tests yet, since it needs an API key and real API calls (would need mocking)
+- `llmReview()` isn't covered by tests yet. It was checked by hand with a fake client (issues come back as a list, a repeated prompt uses the cache, an API error returns `[]` and isn't cached), but that should become offline tests using the same fake-client pattern as the optimizer tests
+- The new `llmReview()` hasn't been run against the real API, so the quality of `claude-haiku-5-5`'s reviews is unchecked
 - **Filler words are matched as substrings:** `text.lower().count(w)` counts "just" inside "adjust" and "best" in "find the best algorithm", so normal prompts can be flagged
 - **The token-to-word ratio check also fires on code, URLs and non-English text**, which naturally have more tokens per word. Those are the prompts the Optimizer should touch least
 - **Short wordy prompts are never optimized:** under 500 tokens the LLM review doesn't run, so a prompt with fewer than 3 filler hits gets no issues and the pipeline returns it as-is
-- **`llmReview()` turns every non-empty line of the reply into an issue**, including a preamble line like "Here are the issues:". It still uses `claude-sonnet-4-6`
+- ~~**`llmReview()` turns every non-empty line of the reply into an issue**, including a preamble line like "Here are the issues:". It still uses `claude-sonnet-4-6`~~ **Fixed (10/14).** The reply comes back as a list through the `report_issues` tool, and the review uses `claude-haiku-5-5`
 - `severity` is computed but nothing in the pipeline uses it yet
 
 ### Tests (`tests/test_auditor.py`)
@@ -159,7 +169,7 @@ Output:
 
 ### Known limitations / things to revisit
 
-- Model is a constant in the file (`OPTIMIZER_MODEL = "claude-sonnet-5-5"`), should move to config along with pricing. Agents 1 and 3 are still on `claude-sonnet-4-6`
+- Model is a constant in the file (`OPTIMIZER_MODEL = "claude-sonnet-5-5"`), should move to config along with pricing. Agent 1's review uses `claude-haiku-5-5` and Agent 3 is still on `claude-sonnet-4-6`
 - `optimizePrompt()` on its own doesn't check that the rewrite kept every item in `preservedConstraints`. The list is the model's own, and nothing compares it to the rewrite. Inside the pipeline, Agent 3 checks the rewrite and the orchestrator falls back to the original if it fails
 - If the rewrite is longer, `optimizePrompt()` reports 0% saved but still returns the longer prompt. The orchestrator discards a rewrite that saves nothing (see the Orchestrator section)
 - The 10 edge cases in `__main__` (filler, concise, constraints, code, URL + quote, negation, injection, "please"-only, duplicates, Spanish) call the real API and print PASS/FAIL, but they aren't a pytest suite and don't run in CI
@@ -392,7 +402,7 @@ Pass `target="claude"` to count with Claude's tokenizer.
 
 - **`passed` is taken from Agent 3 as-is:** a reply like `SCORE: 4` / `PASSED: yes` makes the orchestrator return that rewrite (see Agent 3's limitations and next step 3)
 - **A reply that can't be parsed is handled as a rejection:** the reason "Could not parse Agent 3, Validator, response." is passed to Agent 2 as a rejected attempt, under a heading that says the rewrite was rejected for changing the prompt's meaning. The retry is then told to fix a problem that doesn't exist
-- **No handling of API errors:** a rate limit or network error in any agent raises out of `runPipeline()`. It should return the original prompt instead. Only `tokens.py` catches `APIError` today
+- **No handling of API errors:** a rate limit or network error in any agent raises out of `runPipeline()`. It should return the original prompt instead. Only `tokens.py` and Agent 1's `llmReview()` catch `APIError` today
 - **`.env` is not loaded:** none of the agents call `load_dotenv()`, so the key has to be exported in the shell. Without it the first Claude call fails with "Could not resolve authentication method"
 - **A failed optimization costs more than it could save:** 3 attempts are 6 LLM calls (7 if Agent 1 ran its LLM review), all in sequence before the user gets an answer. `MAX_OPTIMIZATION_ATTEMPTS = 3` is a guess and should be tuned on real prompts
 - **No minimum saving:** only a rewrite that saves 0 tokens is skipped. One that saves 1 or 2 tokens still costs a Validator call and is offered to the user
@@ -475,7 +485,7 @@ if optimizationResult.percentSaved < MIN_PERCENT_SAVED:
 
 **8. Load the API key from `.env`** (`load_dotenv()`, as `testing_agent.py` does) so the agents run without exporting the key first.
 
-**9. One shared client and one place for model names.** Four modules each create an Anthropic client, and the model is `claude-sonnet-4-6` in two of them and `claude-sonnet-5-5` in the other two.
+**9. One shared client and one place for model names.** Four modules each create an Anthropic client, and the models are `claude-haiku-5-5` (Auditor), `claude-sonnet-5-5` (Optimizer, `tokens.py`) and `claude-sonnet-4-6` (Validator).
 
 **10. Add more live test cases for Agent 3** (dropped example, changed audience, a borderline rewrite) so changes to the prompt or model are checked against more than two cases.
 
