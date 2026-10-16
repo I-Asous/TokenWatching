@@ -10,6 +10,5 @@ class Prompt(BaseModel):
     inputted_at: datetime
 
 class PromptCreate(BaseModel):
-    user_id: str
     txt_prompt: str
     context: list[Any] = Field(default_factory=list)

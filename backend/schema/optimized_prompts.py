@@ -17,7 +17,6 @@ class OptimizedPrompt(BaseModel):
     parent_id: int | None = None
 
 class OptimizedPromptCreate(BaseModel):
-    user_id: str
     org_prompt_id: int
     txt_prompt: str = Field(min_length=1)
     tokens: int = Field(ge=0)

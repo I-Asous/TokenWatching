@@ -13,7 +13,6 @@ class Context(BaseModel):
     context_tokens: int | None = None
 
 class ContextCreate(BaseModel):
-    user_id: str
     prompt_id: int
     type: str | None = None
     metadata: dict[str, Any] | None = None
