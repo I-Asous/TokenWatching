@@ -1,30 +1,30 @@
+from supabase import Client
+
 from schema.context import ContextCreate
 
-from repository.client import get_supabase
 
-
-# return all of a specific users context
-def get_user_contexts(user_id: str) -> list[dict]:
+# return all of the caller's context (RLS limits rows to the token's user)
+def get_user_contexts(db: Client) -> list[dict]:
    try:
-      response = get_supabase().table("context").select("*").eq("user_id", str(user_id)).execute()
+      response = db.table("context").select("*").execute()
       return response.data
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")
 
 
-# return the context attached to a specific users prompt
-def get_user_prompt_contexts(user_id: str, prompt_id: int) -> list[dict]:
+# return the context attached to one of the caller's prompts
+def get_user_prompt_contexts(db: Client, prompt_id: int) -> list[dict]:
    try:
-      response = get_supabase().table("context").select("*").eq("user_id", str(user_id)).eq("prompt_id", prompt_id).execute()
+      response = db.table("context").select("*").eq("prompt_id", prompt_id).execute()
       return response.data
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")
 
 
 # send context to the database
-def create_context(context: ContextCreate) -> list[dict]:
+def create_context(db: Client, context: ContextCreate) -> list[dict]:
    try:
-      response = get_supabase().table("context").insert(context.model_dump(mode="json")).execute()
+      response = db.table("context").insert(context.model_dump(mode="json")).execute()
       return response.data
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")

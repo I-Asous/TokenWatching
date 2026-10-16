@@ -1,21 +1,21 @@
-from schema.audit import AuditCreate
+from supabase import Client
 
-from repository.client import get_supabase
+from schema.audit import AuditCreate
 
 
 # return the audits for a specific prompt
-def get_prompt_audits(prompt_id: int) -> list[dict]:
+def get_prompt_audits(db: Client, prompt_id: int) -> list[dict]:
    try:
-      response = get_supabase().table("audit").select("*").eq("prompt_id", prompt_id).execute()
+      response = db.table("audit").select("*").eq("prompt_id", prompt_id).execute()
       return response.data
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")
 
 
 # send an audit to the database
-def create_audit(audit: AuditCreate) -> list[dict]:
+def create_audit(db: Client, audit: AuditCreate) -> list[dict]:
    try:
-      response = get_supabase().table("audit").insert(audit.model_dump(mode="json")).execute()
+      response = db.table("audit").insert(audit.model_dump(mode="json")).execute()
       return response.data
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")
