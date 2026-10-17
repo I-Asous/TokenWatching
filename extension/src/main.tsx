@@ -3,6 +3,10 @@ import ReactDOM from 'react-dom/client';
 import { ClerkProvider } from '@clerk/chrome-extension';
 import App from './App';
 import './style.css';
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const SYNC_HOST = import.meta.env.VITE_CLERK_SYNC_HOST;
@@ -14,6 +18,9 @@ if (!PUBLISHABLE_KEY) {
 const indexUrl = chrome.runtime.getURL('index.html');
 
 const clerkAppearance = {
+  options: {
+    socialButtonsPlacement: 'bottom' as const,
+  },
   variables: {
     colorPrimary: '#000000',
     colorPrimaryForeground: '#FFFFFF',

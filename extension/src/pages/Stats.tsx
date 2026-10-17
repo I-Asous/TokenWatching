@@ -1,6 +1,9 @@
 import "chart.js/auto";
+import { Chart } from "chart.js";
 import { useState } from "react";
 import { Bar, Doughnut } from "react-chartjs-2";
+
+Chart.defaults.font.family = "Inter, Arial, sans-serif";
 
 export default function Stats() {
   const [period, setPeriod] = useState<"week" | "month">("week");

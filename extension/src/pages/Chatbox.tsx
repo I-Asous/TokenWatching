@@ -53,8 +53,6 @@ async function getGuestUserId() {
         body: JSON.stringify({
           user_id: userId,
           txt_prompt: txtPrompt,
-          tokens: 0,
-          context: [],
         }),
       });
       const result = await response.json();
@@ -63,7 +61,7 @@ async function getGuestUserId() {
         throw new Error(result.detail ?? `Backend request failed (${response.status}).`);
       }
 
-      setSendMessage("The backend received prompt.");
+      setSendMessage("Prompt saved to Supabase.");
     } catch (error) {
       setSendError(
         error instanceof Error

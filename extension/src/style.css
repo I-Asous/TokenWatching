@@ -4,7 +4,7 @@ body {
   width: 420px;
   min-height: 620px;
   margin: 0;
-  font-family: Arial, sans-serif;
+  font-family: 'Inter';
   padding-bottom: 10px;
   border-radius: 10px;
 }
@@ -13,17 +13,22 @@ h1{
   margin-left: 10px;
   margin-top: 10px;
   margin-bottom: 10px;
-  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  font-family: 'Inter';
   font-size: 30px;
   font-weight: bold;
   text-transform: uppercase;
   color: #000000;
 }
 
+.Logo h1 {
+  font-family: 'Inter', Arial, sans-serif;
+  text-transform: none;
+}
+
 h2{
   margin-top: 10px;
   margin-bottom: 10px;
-  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  font-family: 'Inter';
   font-size: 25px;
   font-weight: bold;
   text-transform: uppercase;
@@ -34,13 +39,14 @@ h2{
 h4{
   margin-top: 20px;
   margin-bottom: 10px;
-  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  font-family: 'Inter';
   font-size: 15px;
   font-weight: bold;
   text-transform: uppercase;
   color: #000000;
   text-align: center;
 }
+
 .Board1{
 padding-top: 1px;
 padding-bottom: 10px;
@@ -67,9 +73,11 @@ border-radius: 10px;
   align-items: center;
   gap: 6px;
   font-size: 14px;
+  font-family: 'Inter';
 }
 
 .stats-filter select {
+  font-family: 'Inter';
   padding: 6px 8px;
   color: #000000;
   background: #FFFFFF;
@@ -144,6 +152,7 @@ input:not(:placeholder-shown) + .lableLine {
   padding: 10px;
   font-weight: 600;
   font-size: 14px;
+  font-family: 'Inter', Arial, sans-serif;
   text-align: center;
   background-color: #000000;
   color: #FFFFFF;
@@ -159,7 +168,7 @@ input:not(:placeholder-shown) + .lableLine {
   resize: none;
   background-color: #FFFFFF;
   color: #000000;
-  font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
+  font-family: 'Inter', Arial, sans-serif;
   padding-bottom: 20px;
   margin-bottom: 30px;
   border-radius: 10px;
@@ -190,6 +199,7 @@ input:not(:placeholder-shown) + .lableLine {
   border: none;
   border-bottom: 3px solid transparent;
   cursor: pointer;
+  font-family: 'Inter', Arial, sans-serif;
   color: rgb(0, 0, 0);
   transition: background 0.15s ease;
   border-radius: 10px;
