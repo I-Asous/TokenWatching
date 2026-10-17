@@ -4,9 +4,8 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 
 class User(BaseModel):
     user_id: str
-    username: str
-    email: EmailStr
-    hashed_password: str
+    username: str | None = None
+    email: EmailStr | None = None
     created_at: datetime
     updated_at: datetime
 
