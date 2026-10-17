@@ -1,3 +1,5 @@
+# TODO: so many imports can we like not...
+
 from datetime import datetime
 
 # from agents.orchestrator import runPipeline 
@@ -29,25 +31,26 @@ class RunOrchestrator:
     run_id: int
     user_id: str # do we need this? perhap
     prompt_id: int | None = None
-    status: str
-    rate_per_mtok: float = Field(ge=0)
+    status: str = "Pending"
+    rate_per_mtok: float
     final_optimized_prompt_id: int | None = None
-    error_stage: str | None = None
-    error_message: str | None = None
-    started_at: datetime
     finished_at: datetime | None = None
-    updated_at: datetime
 
     ##TODO: i need to pass in the db...
     #TODO: we need to make sure the status changes at the correct time lol?
     #TODO: make the update to actually get the correct format...
 
-    def __init__(self):
+    def __init__(self, prompt: str):
         ## all it has to do it be related to a user?
-        orchestrator = create_orchestration()
+        try:
+            promptFormatted : PromptCreate = structure_response(prompt)
+            savedPrompt = create_prompt(promptFormatted)
 
-        # format this
-        self = orchestrator
+            self.prompt_id = savedPrompt["prompt_id"]
+            self = create_orchestration(self)
+            
+        except Exception as e:
+            logger.log(logging.ERROR, f"failed to save prompt: {e}")
 
         ### I HAD THIS but i think creating one orchestration should solve allat
         # self.status = "pending"
@@ -56,17 +59,6 @@ class RunOrchestrator:
         # self.updated_at = self.started_at
 
     # idk if these needs a return. prob not
-    def savePrompt(self, prompt: str):
-        try:
-                
-            promptFormatted : PromptCreate = structure_response(prompt)
-            savedPrompt = create_prompt(promptFormatted)
-
-            self.prompt_id = savedPrompt["prompt_id"]
-            update_orchestration(self)
-        except Exception as e:
-            logger.log(f"failed to save prompt: {e}")
-
     def saveAudit(self, audit: AuditResult):
         try:
             auditFormatted : AuditCreate = structure_response(audit)
@@ -75,7 +67,7 @@ class RunOrchestrator:
             self.audit_id = savedAudit["audit_id"]
             update_orchestration(self)
         except Exception as e:
-            logger.log(f"failed to save audit: {e}")
+            logger.log(logging.ERROR, f"failed to save audit: {e}")
 
     def saveOptimization(self, optimization: OptimizationResult):
         try:
@@ -84,15 +76,15 @@ class RunOrchestrator:
 
             # update_orchestration(self)
         except Exception as e:
-            logger.log(f"failed to save optimization: {e}")
+            logger.log(logging.ERROR, f"failed to save optimization: {e}")
 
     def saveValidation(self, validation: ValidationResult):
         try:
             validationFormated : ValidationCreate = structure_response(validation)
-            create_validation(validation)
+            create_validation(validationFormated)
 
         except Exception as e:
-            logger.log(f"failed to save validation: {e}")
+            logger.log(logging.ERROR, f"failed to save validation: {e}")
 
     def finishJob(self, result: OrchestrationResult):
         try:
@@ -100,12 +92,7 @@ class RunOrchestrator:
             update_orchestration(orchestrationFormated)
 
         except Exception as e:
-            logger.log(f"failed to save validation: {e}")
-
-
-
-    
-            
+            logger.log(logging.ERROR, f"failed to save resulting: {e}")
 
 ## helpar (PLACEHOLDER i don't feel like implementing it rn lol)
 def structure_response(meow: str):
