@@ -1,5 +1,6 @@
 body {
-  background-color:#F0F4F5;
+  background-color: #FFFFFF;
+  color: #000000;
   width: 420px;
   min-height: 620px;
   margin: 0;
@@ -44,8 +45,36 @@ h4{
 padding-top: 1px;
 padding-bottom: 10px;
 text-align: center;
-background-color: #ffffff;
+background-color: #FFFFFF;
+color: #000000;
 border-radius: 10px;
+}
+
+.stats-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 16px;
+}
+
+.stats-heading h4 {
+  text-align: left;
+}
+
+.stats-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.stats-filter select {
+  padding: 6px 8px;
+  color: #000000;
+  background: #FFFFFF;
+  border: 1px solid #000000;
+  border-radius: 6px;
 }
 
 input {
@@ -55,8 +84,9 @@ input {
   line-height: 35px;
   border-radius: 10px;
   padding: 0 15px;
-  border: 2px solid #E6D9E2;
-  background: transparent;
+  border: 2px solid #000000;
+  background: #FFFFFF;
+  color: #000000;
   transition: 0.1s ease;
   z-index: 1111;
 }
@@ -73,22 +103,22 @@ input {
   top: 50%;
   transform: translateY(-50%);
   pointer-events: none; 
-  color: #E6D9E2; 
+  color: #000000; 
   transition: 0.2s ease;
 }
 
 input:focus,
 input:valid {
-  color: #E6D9E2;
-  border: 2px solid #E6D9E2;
+  color: #000000;
+  border: 2px solid #000000;
 }
 
 input:focus + .lableLine,
 input:not(:placeholder-shown) + .lableLine {
-  color: #E6D9E2;
+  color: #000000;
   height: 10px;
   line-height: 10px;
-  background-color: #85A08F;
+  background-color: #FFFFFF;
   transform: translate(-8px, -23px) scale(.88); 
   z-index: 1111;
 }
@@ -115,8 +145,9 @@ input:not(:placeholder-shown) + .lableLine {
   font-weight: 600;
   font-size: 14px;
   text-align: center;
-  background-color: #E6D9E2;
-  color: #4B3A30;
+  background-color: #000000;
+  color: #FFFFFF;
+  border: 1px solid #000000;
   border-radius: 10px;
 }
 
@@ -126,18 +157,18 @@ input:not(:placeholder-shown) + .lableLine {
   max-height: 8em;
   field-sizing: content;
   resize: none;
-  background-color: #ffffff;
+  background-color: #FFFFFF;
   color: #000000;
   font-family: Fututra, "Trebuchet MS", Arial, sans-serif;
   padding-bottom: 20px;
   margin-bottom: 30px;
   border-radius: 10px;
-  border-color: #0000001d;
+  border: 1px solid #000000;
 }
 .navbar {
   display: flex;
   gap: 4px;
-  background: #F0F4F5;
+  background: #FFFFFF;
   padding-top: 2px;
   padding-bottom: 2px;
   margin-top: 10px;          
@@ -155,7 +186,7 @@ input:not(:placeholder-shown) + .lableLine {
   flex: 1;
   padding: 8px 8px;
   margin: auto;
-  background: #F0F4F5;          
+  background: #FFFFFF;          
   border: none;
   border-bottom: 3px solid transparent;
   cursor: pointer;
@@ -166,15 +197,18 @@ input:not(:placeholder-shown) + .lableLine {
 }
 
 .nav-item:hover {
-  background: #ffffff;          
+  background: #000000;          
+  color: #FFFFFF;
 }
 
 .nav-item:active {
-  background: #ffffff;          
+  background: #000000;          
+  color: #FFFFFF;
 }
 
 .nav-item.active {
-  background: #ffffff;
+  background: #000000;
+  color: #FFFFFF;
   font-weight: 600;
 }
 
