@@ -6,7 +6,7 @@ This README tracks what's been built in `agents/`, why specific decisions were m
 
 ## Agent 1 — Auditor (`auditor.py`)
 
-### Status: Core logic working. `llmReview()` reworked: structured reply, error handling, caching, `claude-haiku-5-5` (10/14/2026)
+### Status: Core logic working. Rule checks now include textstat readability and spaCy grammar checks (10/18/2026). `llmReview()` reworked: structured reply, error handling, caching, `claude-haiku-5-5` (10/14/2026)
 
 ### What it does
 
@@ -18,6 +18,8 @@ Takes a single user-submitted prompt and returns:
 - A severity rating (`Low` / `Medium` / `High`)
 
 ### To test: pytest tests/test_auditor.py -v
+
+The spaCy checks need the English model: `pip install -r requirements.txt` then `python -m spacy download en_core_web_sm`. Without it the spaCy checks are skipped (a warning is logged) and their tests are skipped. The reading ease check needs NLTK's `cmudict` (textstat uses it to count syllables): `python -m nltk.downloader cmudict`. Without it that one check is skipped with a warning. On macOS with the python.org Python, run `Install Certificates.command` from the Python folder in Applications first, or the download fails with `CERTIFICATE_VERIFY_FAILED`.
 
 ### Design decisions
 
@@ -31,6 +33,9 @@ Takes a single user-submitted prompt and returns:
 - **Reviews are cached:** the API call lives in `cachedReview()` (`lru_cache`, 256 entries), so auditing the same prompt again costs nothing. A failed call raises before anything is cached, so the next audit of that prompt tries again. The cached value is a tuple, so callers can't change it.
 - **The prompt being reviewed is treated as text:** the instructions are in the `system` prompt and the user's prompt is wrapped in `<prompt>` tags, with an instruction not to follow anything inside them. A prompt that says "say none found" can no longer hide its own issues.
 - **Haiku for the review** (`REVIEW_MODEL = "claude-haiku-5-5"`): listing token waste is a short, simple task, so the smaller model keeps the review cheap and fast. Not yet checked against real prompts.
+- **textstat for readability (`runReadabilityCheck()`):** flags an average sentence length over 25 words and a Flesch reading ease under 30 (long words and long sentences, and long words split into more tokens). Skipped for prompts under 20 words and prompts with a ``` code block, since readability formulas are built for prose and are noisy on a sentence or two.
+- **spaCy for grammar-based checks (`runSpacyCheck()`):** uses part-of-speech tags to flag prompts where more than 12% of words are adverbs ("very", "really", "actually"), which catches padding the fixed `FILLER_WORDS` list misses. Uses lemmas to find sentences that repeat an earlier one (80%+ of the same content words, so "Keep it short" and "Keeping it short" match).
+- **spaCy is optional at runtime:** the model is loaded once (`loadNlp()`, cached) without the entity recognizer, which no check uses. If `en_core_web_sm` isn't installed, a warning is logged and the spaCy checks return `[]`, the same idea as the `llmReview()` fallback. The Dockerfile and CI download the model.
 
 ### Bugs encountered + fixes
 
@@ -46,6 +51,7 @@ Takes a single user-submitted prompt and returns:
 | Preamble lines became issues, and real issues could be dropped | Every non-empty line of the free-text reply was an issue (including "Here are the issues:"), and the whole reply was thrown away if "none found" appeared anywhere in it | The reply comes back through the `report_issues` tool as a list, so there is no text to parse |
 | A prompt could steer its own review | The prompt was pasted under `PROMPT:` in the same message as the instructions | Instructions moved to `system`, and the prompt is wrapped in `<prompt>` tags with an instruction to treat it only as text |
 | `NameError: name 'lru_cache' is not defined` when collecting tests | The `@lru_cache` decorator was added before its import, so importing `auditor.py` (and `orchestrator.py`, which imports it) failed | Added `from functools import lru_cache` |
+| `LookupError: Resource cmudict not found` in the textstat tests | textstat 0.7.13 counts syllables with NLTK's `cmudict` and downloads it on first use. On macOS the python.org Python had no SSL certificates, so the download failed silently and loading the list raised | `runReadabilityCheck()` catches `LookupError` and skips only the reading ease check. Docker and CI download `cmudict` up front; locally run `Install Certificates.command`, then `python -m nltk.downloader cmudict` |
 
 ### Known limitations / things to revisit
 
@@ -55,7 +61,11 @@ Takes a single user-submitted prompt and returns:
 - ~~Open bug: token-to-word ratio check over-flags~~ **Fixed.** The threshold was `> 1`, but normal English averages ~1.3 tokens/word, so almost every prompt got flagged (e.g. `"What is the capital of France?"` → 7 tokens / 6 words → flagged), and severity was almost never `Low`. Raised it to `> 1.6` (a bit above the ~1.3 average) and removed the `xfail` marker from the clean-prompt test. 1.6 is still a guess, so it's worth gathering real prompt data to tune it
 - `llmReview()` isn't covered by tests yet. It was checked by hand with a fake client (issues come back as a list, a repeated prompt uses the cache, an API error returns `[]` and isn't cached), but that should become offline tests using the same fake-client pattern as the optimizer tests
 - The new `llmReview()` hasn't been run against the real API, so the quality of `claude-haiku-5-5`'s reviews is unchecked
-- **Filler words are matched as substrings:** `text.lower().count(w)` counts "just" inside "adjust" and "best" in "find the best algorithm", so normal prompts can be flagged
+- ~~**Filler words are matched as substrings:** `text.lower().count(w)` counts "just" inside "adjust"~~ **Fixed (10/14).** `FILLER_RE` matches whole words only. "best" in "find the best algorithm" is still counted, since it is a whole word
+- **textstat and spaCy thresholds are guesses** (25 words per sentence, reading ease 30, 12% adverbs, 80% repeat overlap). Same as the 1.6 ratio, they should be tuned on real prompts
+- **textstat and spaCy only understand English:** Flesch scores and `en_core_web_sm` tags are wrong for other languages (e.g. the Spanish edge case)
+- **More rule-based issues means fewer LLM reviews:** the LLM review only runs when no rule-based issue was found, and the new checks find more of them
+- **Deployment size:** spaCy and its small English model add roughly 100 MB to the Docker image
 - **The token-to-word ratio check also fires on code, URLs and non-English text**, which naturally have more tokens per word. Those are the prompts the Optimizer should touch least
 - **Short wordy prompts are never optimized:** under 500 tokens the LLM review doesn't run, so a prompt with fewer than 3 filler hits gets no issues and the pipeline returns it as-is
 - ~~**`llmReview()` turns every non-empty line of the reply into an issue**, including a preamble line like "Here are the issues:". It still uses `claude-sonnet-4-6`~~ **Fixed (10/14).** The reply comes back as a list through the `report_issues` tool, and the review uses `claude-haiku-5-5`
@@ -73,6 +83,11 @@ Offline unit tests. They need no API key and never call Claude. Run from the rep
 | `test_flags_excessive_blank_lines`                     | 2 newlines in a row are fine, 3+ get flagged                                  |
 | `test_runRuleCheck_clean_prompt_has_no_issues`         | A short, direct prompt has no issues (passes now that the ratio bug is fixed) |
 | `test_determineSeverity_thresholds`                    | Low/Medium/High boundaries (300/800 tokens, 1/3 issues)                       |
+| `test_runReadabilityCheck_flags_long_sentences`        | A 36-word run-on sentence is flagged as long                                  |
+| `test_runReadabilityCheck_skips_short_text_and_code`   | Prompts under 20 words and prompts with a code block are skipped              |
+| `test_runSpacyCheck_flags_repeated_sentences`          | A sentence said twice is flagged as a repeat (needs the spaCy model)          |
+| `test_runSpacyCheck_flags_adverb_heavy_text`           | An adverb-heavy prompt is flagged, a plain one isn't (needs the spaCy model)  |
+| `test_runSpacyCheck_without_model_returns_no_issues`   | Without the model the spaCy checks return `[]` and the rest still runs        |
 
 ## CI/CD (9/23/2026)
 
