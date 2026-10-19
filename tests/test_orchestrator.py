@@ -169,6 +169,44 @@ def test_runPipeline_respects_max_attempts(fakeAgents, monkeypatch):
     assert len(fake.optimizerCalls) == 1
     assert result.finalPrompt == PROMPT
 
+SQL_PROMPT = "Please write SQL for me. Always use parameterized queries to prevent SQL injection. Thanks so much!"
+SQL_DROPPED = "Write SQL."
+SQL_KEPT = "Write SQL. Always use parameterized queries."
+
+#A rewrite that breaks a lock is rejected without a Validator call, and the retry is told what it dropped
+def test_runPipeline_broken_lock_skips_validator_and_retries(fakeAgents):
+    fake = fakeAgents(
+        issues=["filler"],
+        rewrites=[(SQL_DROPPED, 15), (SQL_KEPT, 10)],
+        verdicts=[(True, "Only filler removed.")],
+    )
+    result = orchestrator.runPipeline(SQL_PROMPT)
+
+    assert fake.validatorCalls == [SQL_KEPT]
+    retryFeedback = fake.rejectedCalls[1]
+    assert len(retryFeedback) == 1
+    assert retryFeedback[0].rewrite == SQL_DROPPED
+    assert "constraint dropped" in retryFeedback[0].reason and "parameterized" in retryFeedback[0].reason
+
+    assert result.finalPrompt == SQL_KEPT
+    assert result.wasOptimized is True
+    first, second = result.attempts
+    assert first.passed is False and first.qualityScore == 0
+    assert first.reactTrace == "Failed the local lock check, Validator not called."
+    assert second.passed is True
+
+#If every rewrite breaks a lock, the Validator is never called and the original prompt is returned
+def test_runPipeline_every_rewrite_breaks_lock_returns_original(fakeAgents):
+    attempts = orchestrator.MAX_OPTIMIZATION_ATTEMPTS
+    fake = fakeAgents(issues=["filler"], rewrites=[(SQL_DROPPED, 15)] * attempts)
+    result = orchestrator.runPipeline(SQL_PROMPT)
+
+    assert fake.validatorCalls == []
+    assert len(fake.optimizerCalls) == attempts
+    assert len(result.attempts) == attempts
+    assert result.finalPrompt == SQL_PROMPT
+    assert result.wasOptimized is False
+
 #A rewrite that saves no tokens (unchanged or longer) is not validated, retried or returned
 @pytest.mark.parametrize("rewrite", [PROMPT, PROMPT + " Make it as detailed as you possibly can."])
 def test_runPipeline_no_savings_returns_original(fakeAgents, rewrite):
