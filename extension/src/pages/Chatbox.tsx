@@ -1,10 +1,17 @@
 import { useState, useEffect } from 'react';
 
+type ChatTurn = {
+  id: number;
+  prompt: string;
+  result: string | null;
+};
+
 function Chatbox() {
   const [promptValue, setPromptValue] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sendMessage, setSendMessage] = useState("");
   const [sendError, setSendError] = useState("");
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
 
   useEffect(() => {
     // 1. Find the active tab when Chatbox loads
@@ -27,12 +34,6 @@ function Chatbox() {
     });
   }, []);
 
-const GUEST_USER_ID = "00e5e341-5160-4908-9648-802a17def3ce";
-
-async function getGuestUserId() {
-  return GUEST_USER_ID;
-}
-
   async function sendPrompt() {
     const txtPrompt = promptValue.trim();
     if (!txtPrompt) {
@@ -46,16 +47,15 @@ async function getGuestUserId() {
     setSendMessage("");
 
     try {
-      const userId = await getGuestUserId();
-      const response = await fetch("http://127.0.0.1:8000/prompts/prompt", {
+      const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+      const response = await fetch(`${apiBaseUrl}/prompts/guest-prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId,
           txt_prompt: txtPrompt,
         }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(result.detail ?? `Backend request failed (${response.status}).`);
@@ -72,6 +72,21 @@ async function getGuestUserId() {
       setIsSending(false);
     }
   }
+  function addMockTurn() {
+  const prompt = promptValue.trim();
+  if (!prompt) return;
+
+  setTurns(previousTurns => [
+    ...previousTurns,
+    {
+      id: Date.now(),
+      prompt,
+      result: "Sample optimized result goes here.",
+    },
+  ]);
+
+  setPromptValue("");
+}
 
   return (
     <div>
@@ -79,6 +94,24 @@ async function getGuestUserId() {
         <h4 className="enter">Enter Prompt</h4>
 
         {}
+
+        <div className="chat-history">
+  {turns.map((turn) => (
+    <div className="chat-turn" key={turn.id}>
+      <div className="chat-message user-message">
+<span className="message-label">You</span>
+    <p>{turn.prompt}</p>
+  </div>
+
+  <div className="chat-message result-message">
+    <span className="message-label">Result</span>
+    <p>{turn.result ?? "Working..."}</p>
+
+      </div>
+    </div>
+  ))}
+</div>
+
         <textarea 
           className="promptext"
           value={promptValue}
@@ -92,8 +125,15 @@ async function getGuestUserId() {
             onClick={sendPrompt}
             disabled={isSending}
           >
-            {isSending ? "Sending..." : "test"}
+            {isSending ? "Saving..." : "Save prompt"}
           </button>
+          <button
+  type="button"
+  className="app-button"
+  onClick={addMockTurn}
+>
+  Preview sample output
+</button>
         </div>
         {sendMessage && <p role="status">{sendMessage}</p>}
         {sendError && <p role="alert">{sendError}</p>}

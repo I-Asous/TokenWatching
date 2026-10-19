@@ -1,6 +1,8 @@
+import os
+
 from schema.prompts import PromptCreate
 
-from repository.client import get_supabase
+from repository.client import get_supabase, get_supabase_admin
 
 
 ### GET METHODS
@@ -42,6 +44,21 @@ def create_prompt(prompt: PromptCreate) -> list[dict]:
       # need to figure what to do if there is no data... hmmhmmhmm
       return response.data
    # double check this later to see if this exception is the correct one!
+   except Exception as e:
+      raise RuntimeError(f"Database error: {str(e)}")
+
+
+def create_guest_prompt(txt_prompt: str) -> list[dict]:
+   """Save a guest prompt under the shared Supabase guest account."""
+   guest_user_id = os.environ.get("GUEST_SUPABASE_USER_ID", "00e5e341-5160-4908-9648-802a17def3ce")
+   try:
+      response = get_supabase_admin().table("prompt").insert({
+         "user_id": guest_user_id,
+         "txt_prompt": txt_prompt,
+         # The extension currently captures prompts from ChatGPT.
+         "target": "chatgpt",
+      }).execute()
+      return response.data
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")
 

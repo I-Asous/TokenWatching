@@ -15,7 +15,6 @@ h1{
   margin-bottom: 10px;
   font-family: 'Inter';
   font-size: 30px;
-  font-weight: bold;
   text-transform: uppercase;
   color: #000000;
 }
@@ -30,7 +29,6 @@ h2{
   margin-bottom: 10px;
   font-family: 'Inter';
   font-size: 25px;
-  font-weight: bold;
   text-transform: uppercase;
   color: #000000;
   text-align: center;
@@ -41,7 +39,6 @@ h4{
   margin-bottom: 10px;
   font-family: 'Inter';
   font-size: 15px;
-  font-weight: bold;
   text-transform: uppercase;
   color: #000000;
   text-align: center;
@@ -241,4 +238,47 @@ input:not(:placeholder-shown) + .lableLine {
   width: 150px;
   height: 150px;
   margin-left: 5px;
+}
+
+.chat-history {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-turn {
+  margin: 0 12px;
+  padding: 10px;
+  border: 1px solid #000;
+  border-radius: 12px;
+  text-align: left;
+  margin-bottom: 10px;
+}
+
+.chat-message {
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.user-message {
+  background: #000;
+  color: #fff;
+}
+
+.result-message {
+  margin-top: 8px;
+  background: #fff;
+  color: #000;
+  border: 1px solid #000;
+}
+
+.message-label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chat-message p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
