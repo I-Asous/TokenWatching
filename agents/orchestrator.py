@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from agents.auditor import auditPrompt, AuditResult
 from agents.optimizer import optimizePrompt, OptimizationResult, RejectedAttempt
 from agents.validator import validatePrompt, ValidationResult
+from agents.locks import findBrokenLocks
 from agents.tokens import DEFAULT_TARGET
 
 MAX_OPTIMIZATION_ATTEMPTS = 3 #Is three too little? too much? idk come back to it
@@ -35,7 +36,11 @@ class OrchestrationResult:
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues (plus, on retries, every earlier rewrite the Validator
 *    rejected along with its reason).
-* 3. The Validator checks that rewrite against the original prompt.
+* 3. The rewrite is first checked locally against the original's locks (code blocks,
+*    inline code, URLs, rules, numbered steps, see locks.py). If any lock is broken,
+*    the attempt fails without a Validator call and the broken locks are the reason
+*    passed back to the Optimizer. Otherwise the Validator checks the rewrite
+*    against the original prompt.
 * 4. If it passes, that rewrite becomes the final prompt and the loop
 *    stops immediately NO wasted extra calls.
 * 5. If it fails, the Optimizer is retried (up to
@@ -72,6 +77,22 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResul
         #A rewrite that saves nothing (unchanged or longer) isn't worth a Validator call or a retry
         if optimizationResult.tokensSaved == 0:
             break
+
+        #Free local check first: a rewrite that drops a code block, URL, rule or step is REJECTED
+        #without paying for a Validator call then exact reasons go back to the Optimizer
+        brokenLocks = findBrokenLocks(prompt, optimizationResult.optimizedPrompt)
+        if brokenLocks:
+            reason = "Dropped or changed required parts: " + "; ".join(brokenLocks)
+            attempts.append(ValidationResult(
+                originalPrompt=prompt,
+                optimizedPrompt=optimizationResult.optimizedPrompt,
+                qualityScore=0,
+                passed=False,
+                reasoning=reason,
+                reactTrace="Failed the local lock check, Validator not called.",
+            ))
+            rejectedAttempts.append(RejectedAttempt(optimizationResult.optimizedPrompt, reason))
+            continue
 
         validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
         attempts.append(validationResult)
