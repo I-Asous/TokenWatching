@@ -41,6 +41,7 @@ FILLER_WORDS = frozenset({
     "possibly", "just", "hopefully", "somewhat", "amazing", "perfect",
     "literally", "best",
 })
+
 # \b word boundaries so "just" doesn't match inside "adjust", "best" inside "bestow", etc.
 FILLER_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, FILLER_WORDS)) + r")\b", re.IGNORECASE)
 
