@@ -6,8 +6,17 @@ type ChatTurn = {
   result: string | null;
 };
 
+const promptExamples = [
+  "Write a polite email asking my manager to move our meeting to tomorrow.",
+  "Explain photosynthesis in simple terms for a middle school student.",
+  "Help me plan a quick dinner using rice, vegetables, and eggs.",
+  "Summarize these notes into three clear action items.",
+];
+
 function Chatbox() {
   const [promptValue, setPromptValue] = useState("");
+  const [promptExampleIndex, setPromptExampleIndex] = useState(0);
+  const [showPromptExample, setShowPromptExample] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [sendMessage, setSendMessage] = useState("");
   const [sendError, setSendError] = useState("");
@@ -33,6 +42,28 @@ function Chatbox() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (promptValue) {
+      setShowPromptExample(false);
+      return;
+    }
+
+    setShowPromptExample(true);
+    let transitionTimer: number | undefined;
+    const cycleTimer = window.setInterval(() => {
+      setShowPromptExample(false);
+      transitionTimer = window.setTimeout(() => {
+        setPromptExampleIndex((index) => (index + 1) % promptExamples.length);
+        setShowPromptExample(true);
+      }, 300);
+    }, 3600);
+
+    return () => {
+      window.clearInterval(cycleTimer);
+      if (transitionTimer !== undefined) window.clearTimeout(transitionTimer);
+    };
+  }, [promptValue]);
 
   async function sendPrompt() {
     const txtPrompt = promptValue.trim();
@@ -105,12 +136,22 @@ function Chatbox() {
   ))}
 </div>
 
-        <textarea 
-          className="promptext"
-          value={promptValue}
-          placeholder='Ex: Write me an email telling my boss that Ill be late to work due to an emergency at work'
-          onChange={(e) => setPromptValue(e.target.value)}
-        />
+        <div className="prompt-input-wrap">
+          <textarea
+            className="promptext"
+            value={promptValue}
+            aria-label="Enter a prompt"
+            onChange={(e) => setPromptValue(e.target.value)}
+          />
+          {!promptValue && (
+            <div
+              className={`prompt-example${showPromptExample ? "" : " is-fading"}`}
+              aria-hidden="true"
+            >
+              {promptExamples[promptExampleIndex]}
+            </div>
+          )}
+        </div>
         <div className="buttons">
           <button
             type="button"

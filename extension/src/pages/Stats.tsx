@@ -1,48 +1,9 @@
 import "chart.js/auto";
-import { Chart, type ArcElement, type Plugin } from "chart.js";
+import { Chart, type Plugin } from "chart.js";
 import { useState } from "react";
 import { Bar, Doughnut } from "react-chartjs-2";
 
 Chart.defaults.font.family = "Inter, Arial, sans-serif";
-
-const doughnutLabels: Plugin<"doughnut"> = {
-  id: "doughnutLeaderLabels",
-  afterDatasetsDraw(chart) {
-    const dataset = chart.data.datasets[0];
-    const meta = chart.getDatasetMeta(0);
-    if (!dataset || meta.data.length === 0) return;
-
-    const ctx = chart.ctx;
-    ctx.save();
-    ctx.font = "600 10px Inter, Arial, sans-serif";
-    ctx.lineWidth = 1;
-
-    meta.data.forEach((element, index) => {
-      const arc = element as ArcElement;
-      const angle = (arc.startAngle + arc.endAngle) / 2;
-      const side = Math.cos(angle) >= 0 ? 1 : -1;
-      const startX = arc.x + Math.cos(angle) * (arc.outerRadius + 2);
-      const startY = arc.y + Math.sin(angle) * (arc.outerRadius + 2);
-      const elbowX = arc.x + side * (arc.outerRadius + 16);
-      const labelY = arc.y + Math.sin(angle) * (arc.outerRadius + 17);
-      const labelX = elbowX + side * 4;
-      const value = dataset.data[index];
-      const name = String(chart.data.labels?.[index] ?? "Value").toLowerCase();
-      const color = index === 0 ? "#3B82F6" : "#EF4444";
-
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(elbowX, labelY);
-      ctx.stroke();
-      ctx.textAlign = side > 0 ? "left" : "right";
-      ctx.fillText(`Tokens ${name}: ${value}`, labelX, labelY + 4, 100);
-    });
-
-    ctx.restore();
-  },
-};
 
 const barValueLabels: Plugin<"bar"> = {
   id: "barValueLabels",
@@ -68,6 +29,7 @@ const barValueLabels: Plugin<"bar"> = {
 const doughnutOptions = {
   responsive: true,
   maintainAspectRatio: false,
+  cutout: "64%",
   layout: { padding: 4 },
   plugins: {
     legend: { display: false },
@@ -144,8 +106,11 @@ export default function Stats() {
                 }],
               }}
               options={doughnutOptions}
-              plugins={[doughnutLabels]}
             />
+          </div>
+          <div className="donut-values">
+            <span><i className="donut-key used" />Used <strong>20 tokens</strong></span>
+            <span><i className="donut-key remaining" />Left <strong>10 tokens</strong></span>
           </div>
         </section>
 
@@ -163,8 +128,11 @@ export default function Stats() {
                 }],
               }}
               options={doughnutOptions}
-              plugins={[doughnutLabels]}
             />
+          </div>
+          <div className="donut-values">
+            <span><i className="donut-key used" />Saved <strong>30 tokens</strong></span>
+            <span><i className="donut-key remaining" />Left <strong>10 tokens</strong></span>
           </div>
         </section>
       </div>

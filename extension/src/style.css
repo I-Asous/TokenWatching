@@ -20,7 +20,7 @@ body {
 }
 
 h1{
-  margin-left: 10px;
+  margin-left: 15px;
   margin-top: 10px;
   margin-bottom: 10px;
   font-family: 'Inter';
@@ -30,10 +30,22 @@ h1{
 }
 
 .Logo h1 {
+  margin-left: 10px;
   font-family: 'Inter', Arial, sans-serif;
   text-transform: none;
   margin: 0;
   font-size: 24px;
+
+}
+
+.extension-logo-icon {
+  margin-right: 10px;
+  display: block;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  object-fit: contain;
+  border-radius: 10px;
 }
 
 h2{
@@ -170,18 +182,48 @@ input:not(:placeholder-shown) + .lableLine {
 }
 
 .promptext{
-  width: 90%;
-  min-height: 3em;     
-  max-height: 8em;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 120px;
+  max-height: 200px;
   field-sizing: content;
   resize: none;
   background-color: #FFFFFF;
   color: #000000;
   font-family: 'Inter', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: left;
+  padding: 12px;
   padding-bottom: 20px;
-  margin-bottom: 30px;
+  margin: 0;
   border-radius: 10px;
   border: 1px solid #000000;
+}
+
+.prompt-input-wrap {
+  position: relative;
+  width: 90%;
+  margin: 0 auto 30px;
+}
+
+.prompt-example {
+  position: absolute;
+  top: 12px;
+  left: 13px;
+  right: 13px;
+  color: #777777;
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: left;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 300ms ease;
+}
+
+.prompt-example.is-fading {
+  opacity: 0;
 }
 .navbar {
   display: flex;
@@ -267,11 +309,15 @@ input:not(:placeholder-shown) + .lableLine {
 
 .donut-grid {
   display: grid;
-  gap: 12px;
-  padding: 0 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 10px;
 }
 
 .donut-card {
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 8px 10px;
   overflow: hidden;
   border: 1px solid #E5E5E5;
   border-radius: 12px;
@@ -279,7 +325,7 @@ input:not(:placeholder-shown) + .lableLine {
 }
 
 .donut-card h5 {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   color: #171717;
   font-size: 13px;
   text-align: center;
@@ -287,7 +333,45 @@ input:not(:placeholder-shown) + .lableLine {
 
 .donut-chart {
   width: 100%;
-  height: 190px;
+  height: 118px;
+}
+
+.donut-values {
+  display: grid;
+  gap: 5px;
+  margin-top: 2px;
+  color: #555555;
+  font-size: 11px;
+  text-align: left;
+}
+
+.donut-values span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.donut-values strong {
+  margin-left: auto;
+  color: #171717;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.donut-key {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+}
+
+.donut-key.used {
+  background: #3B82F6;
+}
+
+.donut-key.remaining {
+  background: #EF4444;
 }
 
 .history-page {
