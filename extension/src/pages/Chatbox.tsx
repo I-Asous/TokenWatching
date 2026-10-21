@@ -61,7 +61,16 @@ function Chatbox() {
         throw new Error(result.detail ?? `Backend request failed (${response.status}).`);
       }
 
-      setSendMessage("Prompt saved to Supabase.");
+      setTurns((previousTurns) => [
+        ...previousTurns,
+        {
+          id: Date.now(),
+          prompt: txtPrompt,
+          result: null,
+        },
+      ]);
+      setPromptValue("");
+      setSendMessage("Prompt saved. Optimization results are not connected yet.");
     } catch (error) {
       setSendError(
         error instanceof Error
@@ -72,22 +81,6 @@ function Chatbox() {
       setIsSending(false);
     }
   }
-  function addMockTurn() {
-  const prompt = promptValue.trim();
-  if (!prompt) return;
-
-  setTurns(previousTurns => [
-    ...previousTurns,
-    {
-      id: Date.now(),
-      prompt,
-      result: "Sample optimized result goes here.",
-    },
-  ]);
-
-  setPromptValue("");
-}
-
   return (
     <div>
       <div className="Board1">
@@ -105,7 +98,7 @@ function Chatbox() {
 
   <div className="chat-message result-message">
     <span className="message-label">Result</span>
-    <p>{turn.result ?? "Working..."}</p>
+    <p>{turn.result ?? "No optimized result yet."}</p>
 
       </div>
     </div>
@@ -125,15 +118,8 @@ function Chatbox() {
             onClick={sendPrompt}
             disabled={isSending}
           >
-            {isSending ? "Saving..." : "Save prompt"}
+            {isSending ? "Sending..." : "Send prompt"}
           </button>
-          <button
-  type="button"
-  className="app-button"
-  onClick={addMockTurn}
->
-  Preview sample output
-</button>
         </div>
         {sendMessage && <p role="status">{sendMessage}</p>}
         {sendError && <p role="alert">{sendError}</p>}
