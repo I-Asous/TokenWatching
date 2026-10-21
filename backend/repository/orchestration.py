@@ -36,7 +36,7 @@ def create_orchestration(db: Client, orchestration: OrchestrationCreate) -> list
 
 def update_orchestration(db: Client, run_id: int, orchestration: OrchestrationUpdate) -> list[dict]:
    try:
-      response = db.table("orchestration").update(orchestration).eq("run_id", run_id).execute()
+      response = db.table("orchestration").update(orchestration.model_dump(mode="json", exclude_unset=True)).eq("run_id", run_id).execute()
       return response.data
    except Exception as e:
       raise RuntimeError(f"Database error: {str(e)}")
