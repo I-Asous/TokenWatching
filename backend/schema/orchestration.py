@@ -7,7 +7,6 @@ class Orchestration(BaseModel):
     user_id: str
     prompt_id: int
     status: str
-    rate_per_mtok: float = Field(ge=0)
     final_optimized_prompt_id: int | None = None
     error_stage: str | None = None
     error_message: str | None = None
@@ -17,7 +16,6 @@ class Orchestration(BaseModel):
 
 class OrchestrationCreate(BaseModel):
     prompt_id: int
-    rate_per_mtok: float = Field(ge=0)
 
 class OrchestrationUpdate(BaseModel):
     status: str
@@ -25,3 +23,10 @@ class OrchestrationUpdate(BaseModel):
     error_stage: str | None = None
     error_message: str | None = None
     finished_at: datetime | None = None
+
+class OrchestrationInsert(OrchestrationCreate):
+    user_id: str
+
+class OrchestrationRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    target: str

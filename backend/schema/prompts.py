@@ -7,10 +7,11 @@ class Prompt(BaseModel):
     user_id: str
     txt_prompt: str
     target: str
-    char_count: int = Field(ge=0)
     inputted_at: datetime
 
 class PromptCreate(BaseModel):
     txt_prompt: str = Field(min_length=1)
     target: str
-    char_count: int = Field(ge=0)
+
+class PromptInsert(PromptCreate):
+    user_id: str

@@ -18,3 +18,6 @@ class AuditCreate(BaseModel):
     token_count: int = Field(ge=0)
     estimated_cost: float = Field(ge=0)
     severity: str
+
+class AuditInsert(AuditCreate):
+    user_id: str

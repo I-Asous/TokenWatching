@@ -21,3 +21,6 @@ class ValidationCreate(BaseModel):
     passed: bool
     reasoning: str
     react_trace: str = ""
+
+class ValidationInsert(ValidationCreate):
+    user_id: str

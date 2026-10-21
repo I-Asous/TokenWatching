@@ -28,3 +28,6 @@ class OptimizedPromptCreate(BaseModel):
     unchanged: bool = False
     changes: list[str] = Field(default_factory=list)
     preserved_constraints: list[str] = Field(default_factory=list)
+
+class OptimizedPromptInsert(OptimizedPromptCreate):
+    user_id: str
