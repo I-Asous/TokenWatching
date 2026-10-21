@@ -7,6 +7,8 @@ from agents.optimizer import optimizePrompt, OptimizationResult, RejectedAttempt
 from agents.validator import validatePrompt, ValidationResult
 from agents.tokens import DEFAULT_TARGET
 
+from agents.hooks.orchestrator import OrchestrationHooks
+
 MAX_OPTIMIZATION_ATTEMPTS = 3 #Is three too little? too much? idk come back to it
 
 @dataclass
@@ -51,33 +53,47 @@ class OrchestrationResult:
 *    the final token/cost savings (if any), and the Optimizer's list of
 *    changes for the accepted rewrite is returned.
 """
-def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResult:
+def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHooks | None = None) -> OrchestrationResult:
+
+    # we do this so if we want to run it without hooks, we can!
+    hook = hook or OrchestrationHooks()
+
+    hook.updateStage("auditing")
     auditResult = auditPrompt(prompt, target)
+    hook.saveAudit(auditResult)
+
  
     if not auditResult.issues:
-        return OrchestrationResult(
+        orchestrationResult = OrchestrationResult(
             originalPrompt=prompt,
             finalPrompt=prompt,
             wasOptimized=False,
             auditResult=auditResult,
         )
+        hook.finishJob(orchestrationResult)
+        return orchestrationResult
  
     attempts: list[ValidationResult] = []
     rejectedAttempts: list[RejectedAttempt] = []
  
     for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
+        hook.updateStage("optimizing")
         optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
                                             rejectedAttempts=list(rejectedAttempts))
+        hook.saveOptimization(optimizationResult)
 
         #A rewrite that saves nothing (unchanged or longer) isn't worth a Validator call or a retry
         if optimizationResult.tokensSaved == 0:
             break
 
+        hook.updateStage("validating")
         validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
+        hook.saveValidation(validationResult)
+
         attempts.append(validationResult)
  
         if validationResult.passed:
-            return OrchestrationResult(
+            orchestrationResult = OrchestrationResult(
                 originalPrompt=prompt,
                 finalPrompt=optimizationResult.optimizedPrompt,
                 wasOptimized=True,
@@ -87,21 +103,25 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResul
                 percentSaved=optimizationResult.percentSaved,
                 changes=optimizationResult.changes,
             )
+            hook.finishJob(orchestrationResult)
+
+            return orchestrationResult
         
         #Feed the rejected rewrite and the Validator's reasoning back in so the next
         #attempt sees what it wrote and what that broke, instead of failing the same way again
         rejectedAttempts.append(
             RejectedAttempt(optimizationResult.optimizedPrompt, validationResult.reasoning)
         )
- 
     #No attempt passed validation within the retry amount SO fail gets closed.
-    return OrchestrationResult(
+    orchestrationResult = OrchestrationResult(
         originalPrompt=prompt,
         finalPrompt=prompt,
         wasOptimized=False,
         auditResult=auditResult,
         attempts=attempts,
     )
+    hook.finishJob(orchestrationResult)
+    return orchestrationResult
     
 if __name__ == "__main__":
     sample = ("Please, could you kindly help me write a short story? I would really appreciate it if you could make it about a dragon. Thank you so much!") 
