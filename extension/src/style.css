@@ -5,11 +5,17 @@ body {
   min-height: 620px;
   margin: 0;
   font-family: 'Inter';
+  padding-top: 108px;
   padding-bottom: 10px;
   border-radius: 10px;
 }
 
 .Logo {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 21;
   display: flex;
   align-items: center;
   min-height: 58px;
@@ -195,6 +201,7 @@ input:not(:placeholder-shown) + .lableLine {
   line-height: 1.45;
   text-align: left;
   padding: 12px;
+  padding-right: 58px;
   padding-bottom: 20px;
   margin: 0;
   border-radius: 10px;
@@ -207,11 +214,42 @@ input:not(:placeholder-shown) + .lableLine {
   margin: 0 auto 30px;
 }
 
+.prompt-send-button {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  color: #FFFFFF;
+  background: #000000;
+  border: 1px solid #000000;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.prompt-send-button svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.prompt-send-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .prompt-example {
   position: absolute;
   top: 12px;
   left: 13px;
-  right: 13px;
+  right: 58px;
   color: #777777;
   font-family: 'Inter', Arial, sans-serif;
   font-size: 14px;
@@ -226,16 +264,18 @@ input:not(:placeholder-shown) + .lableLine {
   opacity: 0;
 }
 .navbar {
+  position: fixed;
+  right: 5px;
+  top: 58px;
+  left: 5px;
+  z-index: 20;
   display: flex;
   gap: 4px;
   background: #FFFFFF;
-  padding-top: 2px;
-  padding-bottom: 2px;
-  margin-top: 10px;          
-  margin-bottom: 12px;
-  margin-left: 5px;
-  margin-right: 5px;
+  padding: 4px;
+  margin: 0;
   border-radius: 10px;
+  box-shadow: 0 3px 8px rgb(0 0 0 / 8%);
   cursor: pointer;
   color: rgb(0, 0, 0);
   transition: background 0.15s ease;
@@ -277,23 +317,6 @@ input:not(:placeholder-shown) + .lableLine {
   padding-top: 30px;
   padding-bottom: 5px;
 }
-.boardContainer{
-  display: flex;
-  justify-content: center;   
-  align-items: center;
-  gap: 10px;
-}
-.board2{
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: transparent;
-  border-radius: 10px;
-  width: 150px;
-  height: 150px;
-  margin-left: 5px;
-}
-
 .stats-page {
   padding: 8px 0 16px;
 }
@@ -336,44 +359,6 @@ input:not(:placeholder-shown) + .lableLine {
   height: 118px;
 }
 
-.donut-values {
-  display: grid;
-  gap: 5px;
-  margin-top: 2px;
-  color: #555555;
-  font-size: 11px;
-  text-align: left;
-}
-
-.donut-values span {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.donut-values strong {
-  margin-left: auto;
-  color: #171717;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.donut-key {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-  border-radius: 50%;
-}
-
-.donut-key.used {
-  background: #3B82F6;
-}
-
-.donut-key.remaining {
-  background: #EF4444;
-}
-
 .history-page {
   display: flex;
   min-height: 500px;
@@ -392,41 +377,81 @@ input:not(:placeholder-shown) + .lableLine {
   font-size: 13px;
 }
 
-.history-chat {
+.history-sample-note {
+  align-self: flex-start;
+  margin: 0 0 10px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #F0F0F0;
+  color: #555555;
+  font-size: 11px;
+}
+
+.history-conversations {
   display: flex;
   flex: 1;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.history-item {
+  padding: 10px;
   border: 1px solid #E5E5E5;
-  border-radius: 14px;
+  border-radius: 12px;
+  background: #FFFFFF;
+  text-align: left;
+}
+
+.history-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #555555;
+  font-size: 11px;
+}
+
+.history-item-header span {
+  color: #171717;
+  font-weight: 600;
+}
+
+.history-item-header time {
+  white-space: nowrap;
+}
+
+.history-message {
+  padding: 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.history-prompt {
+  background: #111111;
+  color: #FFFFFF;
+}
+
+.history-result {
+  margin-top: 7px;
+  border: 1px solid #E5E5E5;
   background: #FAFAFA;
-  text-align: center;
+  color: #171717;
 }
 
-.history-empty-icon {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  margin-bottom: 12px;
-  place-items: center;
-  border-radius: 50%;
-  background: #EAEAEA;
-  color: #333333;
-  font-size: 25px;
+.history-message-label {
+  font-size: 11px;
+  font-weight: 700;
 }
 
-.history-chat strong {
-  font-size: 14px;
-}
-
-.history-chat p {
-  max-width: 250px;
-  margin: 8px 0 0;
-  color: #666666;
+.history-message p {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: inherit;
   font-size: 13px;
-  line-height: 1.5;
 }
 
 .chat-history {

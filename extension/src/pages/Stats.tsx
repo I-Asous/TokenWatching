@@ -1,5 +1,5 @@
 import "chart.js/auto";
-import { Chart, type Plugin } from "chart.js";
+import { Chart, type ArcElement, type Plugin } from "chart.js";
 import { useState } from "react";
 import { Bar, Doughnut } from "react-chartjs-2";
 
@@ -26,11 +26,82 @@ const barValueLabels: Plugin<"bar"> = {
   },
 };
 
+const doughnutCallouts: Plugin<"doughnut"> = {
+  id: "doughnutCallouts",
+  afterDatasetsDraw(chart) {
+    const dataset = chart.data.datasets[0];
+    const meta = chart.getDatasetMeta(0);
+    if (!dataset || meta.data.length === 0) return;
+
+    const { ctx, chartArea } = chart;
+    const calloutX = chartArea.right + 8;
+    ctx.save();
+    ctx.font = "600 9px Inter, Arial, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 1.25;
+
+    const callouts = meta.data.map((element, index) => {
+      const arc = element as ArcElement;
+      const angle = (arc.startAngle + arc.endAngle) / 2;
+      return {
+        arc,
+        angle,
+        index,
+        startX: arc.x + Math.cos(angle) * (arc.outerRadius + 1),
+        startY: arc.y + Math.sin(angle) * (arc.outerRadius + 1),
+      };
+    }).sort((a, b) => a.startY - b.startY);
+
+    callouts.forEach(({ arc, angle, index, startX, startY }, order) => {
+      const color = index === 0 ? "#3B82F6" : "#EF4444";
+      const value = dataset.data[index];
+      const label = String(chart.data.labels?.[index] ?? "Value");
+      const targetY = chartArea.top + 24 + order * 42;
+      const onRight = Math.cos(angle) >= 0;
+      const outerX = onRight ? chartArea.right + 3 : chartArea.left - 3;
+      const labelStartX = calloutX + 6;
+
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(outerX, startY);
+      if (onRight) {
+        ctx.lineTo(outerX, targetY);
+      } else {
+        const routeY = targetY < arc.y ? chartArea.top + 2 : chartArea.bottom - 2;
+        ctx.lineTo(outerX, routeY);
+        ctx.lineTo(calloutX, routeY);
+        ctx.lineTo(calloutX, targetY);
+      }
+      ctx.lineTo(labelStartX - 3, targetY);
+      ctx.stroke();
+
+      // Keep the arrowhead at the slice so it points to the color being identified.
+      const radialX = Math.cos(angle);
+      const radialY = Math.sin(angle);
+      const baseX = startX + radialX * 6;
+      const baseY = startY + radialY * 6;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(baseX - radialY * 3, baseY + radialX * 3);
+      ctx.lineTo(baseX + radialY * 3, baseY - radialX * 3);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.textAlign = "left";
+      ctx.fillText(`${label}: ${value}`, labelStartX, targetY, 64);
+    });
+
+    ctx.restore();
+  },
+};
+
 const doughnutOptions = {
   responsive: true,
   maintainAspectRatio: false,
   cutout: "64%",
-  layout: { padding: 4 },
+  layout: { padding: { left: 4, right: 70, top: 4, bottom: 4 } },
   plugins: {
     legend: { display: false },
     tooltip: { enabled: true },
@@ -106,11 +177,8 @@ export default function Stats() {
                 }],
               }}
               options={doughnutOptions}
+              plugins={[doughnutCallouts]}
             />
-          </div>
-          <div className="donut-values">
-            <span><i className="donut-key used" />Used <strong>20 tokens</strong></span>
-            <span><i className="donut-key remaining" />Left <strong>10 tokens</strong></span>
           </div>
         </section>
 
@@ -128,11 +196,8 @@ export default function Stats() {
                 }],
               }}
               options={doughnutOptions}
+              plugins={[doughnutCallouts]}
             />
-          </div>
-          <div className="donut-values">
-            <span><i className="donut-key used" />Saved <strong>30 tokens</strong></span>
-            <span><i className="donut-key remaining" />Left <strong>10 tokens</strong></span>
           </div>
         </section>
       </div>

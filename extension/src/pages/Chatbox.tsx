@@ -151,15 +151,17 @@ function Chatbox() {
               {promptExamples[promptExampleIndex]}
             </div>
           )}
-        </div>
-        <div className="buttons">
           <button
             type="button"
-            className="app-button"
+            className="prompt-send-button"
             onClick={sendPrompt}
             disabled={isSending}
+            aria-label={isSending ? "Sending prompt" : "Send prompt"}
+            title={isSending ? "Sending..." : "Send prompt"}
           >
-            {isSending ? "Sending..." : "Send prompt"}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
           </button>
         </div>
         {sendMessage && <p role="status">{sendMessage}</p>}
