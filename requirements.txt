@@ -2,6 +2,8 @@ anthropic
 pydantic
 python-dotenv
 tiktoken
+spacy
+textstat
 fastapi[standard]==0.142.2
 supabase==2.31.0
 email-validator
