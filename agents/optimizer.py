@@ -167,20 +167,30 @@ How to answer:
 
 """
 * @brief Builds the message sent to the optimizer LLM, including any
-* known issues from Agent 1 so the rewrite targets real problems, and any
-* earlier rewrites the Validator rejected so a retry fixes them.
+* known issues from Agent 1 so the rewrite targets real problems, what
+* this prompt must keep, and any earlier rewrites the Validator rejected
+* so a retry fixes them.
 * @post
 * 1. If issues were provided, they're listed to focus the rewrite.
-* 2. If earlier rewrites were rejected, each one is shown in tags with
+* 2. If must-preserve items were provided (tasks, rules and numbers found
+*    by the local checks), they're listed, since a rewrite that drops one
+*    is rejected without a Validator call.
+* 3. If earlier rewrites were rejected, each one is shown in tags with
 *    the Validator's reason, so the LLM sees exactly what it broke.
-* 3. The original prompt comes last, so it's what the LLM rewrites.
-* 4. A single combined string is returned.
+* 4. The original prompt comes last, so it's what the LLM rewrites.
+* 5. A single combined string is returned.
 """
-def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[RejectedAttempt] = None) -> str:
+def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[RejectedAttempt] = None,
+                     mustPreserve: list[str] = None) -> str:
     issuesSection = ""
     if issues:
         issuesList = "\n".join(f"- {issue}" for issue in issues)
         issuesSection = f"Known issues found in prompt:\n{issuesList}\n\n"
+
+    preserveSection = ""
+    if mustPreserve:
+        preserveList = "\n".join(f"- {item}" for item in mustPreserve)
+        preserveSection = f"The rewrite must keep (the verb may change, the task may not):\n{preserveList}\n\n"
 
     rejectedSection = ""
     if rejectedAttempts:
@@ -196,6 +206,7 @@ def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[Reje
  
     return (
             f"{issuesSection}"
+            f"{preserveSection}"
             f"{rejectedSection}"
             f"PROMPT TO OPTIMIZE:\n{prompt}"
             )
@@ -213,7 +224,8 @@ def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[Reje
 *    stripped of whitespace.
 """
 def callOptimizerLLM(prompt: str, issues: list[str],
-                     rejectedAttempts: list[RejectedAttempt] = None) -> Rewrite | None:
+                     rejectedAttempts: list[RejectedAttempt] = None,
+                     mustPreserve: list[str] = None) -> Rewrite | None:
     response = client.messages.parse(
         model=OPTIMIZER_MODEL,
         max_tokens=16000,
@@ -225,7 +237,7 @@ def callOptimizerLLM(prompt: str, issues: list[str],
         }],
         messages=[{
             "role": "user",
-            "content": buildUserMessage(prompt, issues, rejectedAttempts)
+            "content": buildUserMessage(prompt, issues, rejectedAttempts, mustPreserve)
         }],
         output_format=Rewrite,
     )
@@ -243,8 +255,8 @@ def callOptimizerLLM(prompt: str, issues: list[str],
 * 1. The original prompt's token count is calculated with the target
 *    LLM's tokenizer, so savings match what the user is actually billed.
 * 2. The prompt is sent to the optimizer LLM, along with any known
-*    issues from Agent 1 and any earlier rewrites the Validator rejected,
-*    and a structured Rewrite is returned.
+*    issues from Agent 1, what the prompt must keep, and any earlier
+*    rewrites the Validator rejected, and a structured Rewrite is returned.
 * 3. If the LLM marked the prompt unchanged, returned an empty rewrite,
 *    or gave no usable reply, the original prompt is kept (zero savings).
 * 4. The optimized prompt's token count is calculated.
@@ -253,11 +265,12 @@ def callOptimizerLLM(prompt: str, issues: list[str],
 *    of changes and preserved constraints.
 """
 def optimizePrompt(prompt: str, issues: list[str] = None, target: str = DEFAULT_TARGET,
-                   rejectedAttempts: list[RejectedAttempt] = None) -> OptimizationResult:
+                   rejectedAttempts: list[RejectedAttempt] = None,
+                   mustPreserve: list[str] = None) -> OptimizationResult:
     issues = issues or []
     originalTokens = countTokens(prompt, target)
  
-    rewrite = callOptimizerLLM(prompt, issues, rejectedAttempts)
+    rewrite = callOptimizerLLM(prompt, issues, rejectedAttempts, mustPreserve)
     if rewrite is None or rewrite.unchanged or not rewrite.optimizedPrompt:
         optimizedPrompt, changes = prompt, []
     else:

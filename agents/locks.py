@@ -25,6 +25,13 @@ CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 URL_RE = re.compile(r"https?://[^\s)>\]]+")
 STEP_RE = re.compile(r"^\s*(?:\d+[.)]|step\s+\d+[:.)]?)\s+(.+)$", re.IGNORECASE | re.MULTILINE)
+STEP_MARKER_RE = re.compile(r"^\s*(?:\d+[.)]|step\s+\d+[:.)]?)\s+", re.IGNORECASE | re.MULTILINE)
+#"one" is left out: it's more often a pronoun ("the best one") than a count
+NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8",
+                "nine": "9", "ten": "10", "eleven": "11", "twelve": "12", "fifteen": "15", "twenty": "20",
+                "thirty": "30", "fifty": "50", "hundred": "100"}
+#Whole numbers only, so "q3" and "v2" aren't numbers, but "3-day" and "$50" are
+NUMBER_RE = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*(?!\w)|\b(?:" + "|".join(NUMBER_WORDS) + r")\b", re.IGNORECASE)
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 WORD_RE = re.compile(r"[a-z]+")
 
@@ -42,8 +49,29 @@ FALLBACK_STOP_WORDS = frozenset({
 
 @dataclass(frozen=True)
 class Lock:
-    kind: str #"code block", "inline code", "url", "constraint" or "step"
+    kind: str #"code block", "inline code", "url", "constraint", "step" or "number"
     text: str
+    context: str = "" #for numbers: the sentence it came from, so the reason says which number
+
+"""
+* @brief Finds the numbers in a prompt's prose and the sentence each one is in.
+* @post
+* 1. Code blocks, inline code, URLs and step markers ("1.", "Step 2:") are removed first:
+*    they're locked on their own, and "1." isn't a count.
+* 2. Number words become digits ("five" -> "5") and thousands commas are dropped ("1,000" -> "1000"),
+*    so a rewrite may write a number either way.
+* 3. Returns {number: first sentence it appears in}, in order of appearance.
+"""
+def findNumbers(text: str) -> dict[str, str]:
+    prose = URL_RE.sub(" ", INLINE_CODE_RE.sub(" ", CODE_BLOCK_RE.sub("\n", text)))
+    prose = STEP_MARKER_RE.sub("", prose)
+    numbers: dict[str, str] = {}
+    for sentence in splitSentences(prose):
+        for match in NUMBER_RE.finditer(sentence):
+            value = match.group(0).lower()
+            value = NUMBER_WORDS.get(value, re.sub(r"(?<=\d),(?=\d{3}\b)", "", value))
+            numbers.setdefault(value, sentence)
+    return numbers
 
 """
 * @brief Reduces text to its set of content words, so two sentences can be compared by meaning-carrying words.
@@ -89,7 +117,9 @@ def shorten(text: str) -> str:
 *    Code blocks are removed first, so code doesn't count as a sentence.
 * 3. A constraint that repeats an earlier one is skipped, so deduplicating rules stays allowed.
 * 4. Numbered lines ("1. ...", "Step 2: ...") are locked as steps, in order.
-* 5. The locks are returned in the order above.
+* 5. Every number in the prose is locked ("under 300 words", "5 names"). Constraints only compare
+*    words, so without this "Never return more than 100 rows" -> "...10 rows" would pass.
+* 6. The locks are returned in the order above.
 """
 def extractLocks(prompt: str) -> list[Lock]:
     prompt = prompt.replace("’", "'") #curly apostrophes, so "don’t" matches "don't" in the word lists
@@ -112,6 +142,7 @@ def extractLocks(prompt: str) -> list[Lock]:
         locks.append(Lock("constraint", sentence))
 
     locks += [Lock("step", step.strip()) for step in STEP_RE.findall(prose)]
+    locks += [Lock("number", value, sentence) for value, sentence in findNumbers(prompt).items()]
     return locks
 
 """
@@ -170,7 +201,8 @@ def checkSteps(steps: list[str], rewrite: str) -> list[str]:
 *    ignoring trailing spaces).
 * 2. Constraints must survive in some sentence of the rewrite, with negations kept.
 * 3. Numbered steps must all survive, in order.
-* 4. A list of readable reasons is returned, one per broken lock (empty if the rewrite keeps everything).
+* 4. Every number must still appear in the rewrite's prose (written as digits or as a word).
+* 5. A list of readable reasons is returned, one per broken lock (empty if the rewrite keeps everything).
 *    The reasons are written so they can be passed straight back to the Optimizer as a RejectedAttempt.
 """
 def findBrokenLocks(prompt: str, rewrite: str) -> list[str]:
@@ -182,6 +214,7 @@ def findBrokenLocks(prompt: str, rewrite: str) -> list[str]:
     locks = extractLocks(prompt)
     normalizedRewrite = normalizeCode(rewrite)
     rewriteSentences = splitSentences(CODE_BLOCK_RE.sub("\n", rewrite))
+    rewriteNumbers = findNumbers(rewrite)
     reasons = []
 
     for lock in locks:
@@ -193,6 +226,8 @@ def findBrokenLocks(prompt: str, rewrite: str) -> list[str]:
             reason = checkConstraint(lock.text, rewriteSentences)
             if reason:
                 reasons.append(reason)
+        elif lock.kind == "number" and lock.text not in rewriteNumbers:
+            reasons.append(f'number dropped or changed: "{lock.text}" (in "{shorten(lock.context)}")')
 
     steps = [lock.text for lock in locks if lock.kind == "step"]
     reasons += checkSteps(steps, rewrite)

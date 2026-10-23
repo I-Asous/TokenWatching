@@ -447,6 +447,52 @@ Current result: `63 passed, 2 deselected` across all five offline test files (au
 
 ---
 
+## Intent detection (`intent.py`)
+
+### Status: Working and tested offline, used by the orchestrator for must-preserve lists and the local task check (10/22/2026)
+
+### What it does
+
+`detectIntent(prompt)` uses spaCy (the Auditor's `loadNlp()`, no API call) to find what a prompt asks the model to do. Each request becomes an `Action` with a class (`generate`, `transform`, `fix`, `explain`, `extract`, `compare`, `classify`, plus `question` and `unclear`), its verb and the thing it acts on:
+
+| Prompt | Action |
+| --- | --- |
+| "Could you please help me fix this bug?" | `fix`, "this bug" |
+| "I was wondering if you could help me come up with some names?" | `generate`, "come up", "some names" |
+| "Give me a quick summary of the French Revolution." | `extract`, "a quick summary of the French Revolution" |
+| "How do I reverse a list in Python?" | `question` |
+| "Can you help me with my essay?" | `unclear`, "my essay" |
+| "Keep it short." / "Don't write code." / "I have a knee injury." | nothing (constraint or context) |
+
+The orchestrator uses it in two places:
+
+- **`buildMustPreserve()`** lists each task (`describeIntent()`), plus every constraint and number lock, and the Optimizer gets that list in its message on every attempt (`mustPreserve`). Before, it only found out what it had to keep after a rejection.
+- **`findIntentChanges(original, rewrite)`** runs next to `findBrokenLocks()` before the Validator. A rewrite that drops or changes a task ("Explain how recursion works" → "Write a recursive function"), drops what a task acts on ("cover letter" → "resume", "French Revolution" → "Russian Revolution") or turns "X or Y" into "X and Y" is rejected without a Validator call, and the reason goes back to the Optimizer.
+
+`locks.py` also gained **number locks**: every number in the prose must still be in the rewrite, as digits or a word ("five" = "5", "1,000" = "1000"). Constraint locks only compare words, so "Never return more than 100 rows" → "...10 rows" used to pass.
+
+### To test: pytest tests/test_intent.py -v
+
+### Design decisions
+
+- **The verb may change, the class may not:** "Could you create" → "Write" is fine, "Explain" → "Write" isn't. A question may become "Explain..." (`COMPATIBLE_CLASSES`), since that's the usual rewrite of "How do I...?"
+- **Only the object's main noun and proper nouns are checked:** "List 5 common causes" → "List 5 causes" is allowed, "a Python function" → "a function" isn't (names have to be copied exactly anyway)
+- **`unclear` tasks aren't checked:** the rewrite may state them more plainly. The must-preserve line tells the Optimizer not to guess what they mean
+- **Workarounds for `en_core_web_sm` mistakes:** the polite clause is used when the root is something else ("..., it's really bugging me"), and a command verb tagged as a noun ("List", "Debug") is still found
+- **"make it short" next to another task is a constraint**, not a second `transform` task
+- **Non-English prompts aren't parsed:** the small English model turns them into nonsense actions, so `detectIntent()` returns `isEnglish = False` with no actions, and the task check is skipped (decided by counting common Spanish/French/German/Italian/Portuguese function words against English stop words)
+- **All numbers are locked, even in backstory** ("stuck on this for 3 hours"): a false rejection costs a retry, but a false acceptance changes the request. The Optimizer is told the numbers up front, so it usually keeps them the first time
+
+### Known limitations / things to revisit
+
+- `en_core_web_sm` still misparses some prompts: in "Compare Python, Go or Rust", "Go" is read as a verb, so the object is just "Python"
+- Objects are the main noun phrase only: "What is the capital of France?" gives "the capital"
+- The output-format, audience and length slots (first suggestion, step 1) aren't extracted yet, so only tasks, rules and numbers are checked
+- Verb lists are hand-made. An unknown command verb ("Draft" is known, "Jot down" isn't) is skipped rather than guessed
+- `findIntentChanges()` hasn't been run on real Optimizer output yet. The false-rejection rate should be measured before relying on it
+
+---
+
 ## Next steps (with examples)
 
 Updated 10/4/2026. Done since the last version of this list:
