@@ -120,15 +120,19 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
                        + findIntentChanges(prompt, optimizationResult.optimizedPrompt))
         if brokenLocks:
             reason = "Dropped or changed required parts: " + "; ".join(brokenLocks)
-            attempts.append(ValidationResult(
+
+            brokenLockValidation = ValidationResult(
                 originalPrompt=prompt,
                 optimizedPrompt=optimizationResult.optimizedPrompt,
                 qualityScore=0,
                 passed=False,
                 reasoning=reason,
                 reactTrace="Failed the local lock check, Validator not called.",
-            ))
+            )
+            attempts.append(brokenLockValidation)
             rejectedAttempts.append(RejectedAttempt(optimizationResult.optimizedPrompt, reason))
+            
+            hook.saveValidation(brokenLockValidation)
             continue
 
         validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
