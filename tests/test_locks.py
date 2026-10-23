@@ -93,3 +93,21 @@ def test_filler_only_rewrite_passes():
 def test_no_locks_and_identical_rewrite_pass():
     assert findBrokenLocks(SQL_PROMPT, SQL_PROMPT) == []
     assert findBrokenLocks("Write a story about a dragon.", "Dragon story.") == []
+
+#Every number in the prose is locked; step markers, URLs and inline code aren't numbers
+def test_extractLocks_finds_numbers():
+    prompt = "Write 3 bullet points under 1,000 characters. See https://example.com/q3 and `v2`.\n1. Draft it.\n2. Cut five words."
+    assert [lock.text for lock in extractLocks(prompt) if lock.kind == "number"] == ["3", "1000", "5"]
+
+#A changed number is a broken lock, even inside a constraint whose words all survived
+def test_findBrokenLocks_changed_number():
+    reasons = findBrokenLocks("Never return more than 100 rows.", "Never return more than 10 rows.")
+    assert reasons == ['number dropped or changed: "100" (in "Never return more than 100 rows.")']
+
+#Numbers may be written as digits or words, and with or without thousands commas
+@pytest.mark.parametrize("original, rewrite", [
+    ("Please suggest five names.", "Suggest 5 names."),
+    ("Keep it under 1,000 words please.", "Keep it under 1000 words."),
+])
+def test_findBrokenLocks_number_spelling_is_free(original, rewrite):
+    assert findBrokenLocks(original, rewrite) == []
