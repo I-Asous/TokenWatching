@@ -21,6 +21,7 @@ if (googleDone) {
 function App() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [tab, setTab] = useState<Tab>('prompt');
+  const [isGuest, setIsGuest] = useState(false);
   if (googleDone) return null;
 
   // Open google login tab
@@ -30,41 +31,62 @@ function App() {
     chrome.tabs.create({ url: `${import.meta.env.VITE_CLERK_SYNC_HOST}/?google=1&ext=${chrome.runtime.id}` });
   };
 
+  const workspace = (
+    <>
+      <Navbar active={tab} onChange={setTab} />
+
+      {isGuest && (
+        <div className="Board1">
+
+        </div>
+      )}
+
+      {tab === 'stats' && <Stats />}
+      {tab === 'prompt' && <Chatbox />}
+      {tab === 'history' && <History />}
+
+      {!isGuest && (
+        <div className="Board1">
+          <UserButton />
+        </div>
+      )}
+    </>
+  );
+
   return (
     <>
       <div className="Logo">
         <h1>Token Watching</h1>
       </div>
 
-      <Show when="signed-out">
-        <div className="Board1">
-          {mode === 'sign-in' ? <SignIn routing="hash" /> : <SignUp routing="hash" />}
+      {isGuest ? (
+        workspace
+      ) : (
+        <>
+          <Show when="signed-out">
+            <div className="Board1">
+              {mode === 'sign-in' ? <SignIn routing="hash" /> : <SignUp routing="hash" />}
 
-          <div className="buttons">
-            {mode === 'sign-in' ? (
-              <button type="button" className="app-button" onClick={() => setMode('sign-up')}>
-                Sign up instead
-              </button>
-            ) : (
-              <button type="button" className="app-button" onClick={() => setMode('sign-in')}>
-                Sign in instead
-              </button>
-            )}
-          </div>
-        </div>
-      </Show>
+              <div className="buttons">
+                {mode === 'sign-in' ? (
+                  <button type="button" className="app-button" onClick={() => setMode('sign-up')}>
+                    Sign up instead
+                  </button>
+                ) : (
+                  <button type="button" className="app-button" onClick={() => setMode('sign-in')}>
+                    Sign in instead
+                  </button>
+                )}
+                <button type="button" className="app-button" onClick={() => setIsGuest(true)}>
+                  Get in as a guest
+                </button>
+              </div>
+            </div>
+          </Show>
 
-      <Show when="signed-in">
-        <Navbar active={tab} onChange={setTab} />
-
-        {tab === 'stats' && <Stats />}
-        {tab === 'prompt' && <Chatbox />}
-        {tab === 'history' && <History />}
-
-        <div className="Board1">
-          <UserButton />
-        </div>
-      </Show>
+          <Show when="signed-in">{workspace}</Show>
+        </>
+      )}
     </>
   );
 }
