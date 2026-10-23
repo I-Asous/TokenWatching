@@ -237,3 +237,16 @@ def test_examples_do_not_reuse_main_cases():
     mainBlock = source[source.index('if __name__ == "__main__":'):]
     for prompt, _ in optimizer.OPTIMIZER_EXAMPLES:
         assert prompt[:40] not in mainBlock
+
+#Must-preserve items are listed before the prompt; the section is left out when there are none
+def test_buildUserMessage_with_must_preserve():
+    message = optimizer.buildUserMessage("Please write a 300-word bio.", [], mustPreserve=['task: write "a bio"', "number: 300"])
+    assert "must keep" in message and '- task: write "a bio"' in message and "- number: 300" in message
+    assert message.index("number: 300") < message.index("PROMPT TO OPTIMIZE")
+    assert "must keep" not in optimizer.buildUserMessage("Write a poem.", [])
+
+#optimizePrompt passes the must-preserve list through to the LLM message
+def test_optimizePrompt_forwards_must_preserve(fakeClient):
+    messages = fakeClient("Write a 300-word bio.")
+    optimizer.optimizePrompt("Please write a 300-word bio.", mustPreserve=["number: 300"])
+    assert "- number: 300" in messages.lastRequest["messages"][0]["content"]

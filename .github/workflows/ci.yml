@@ -29,6 +29,10 @@ jobs:
           cache-dependency-path: requirements*.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Download spaCy model and NLTK cmudict
+        run: |
+          python -m spacy download en_core_web_sm
+          python -m nltk.downloader cmudict
       - name: Pylint
         run: pylint --rcfile=pylintrc.toml $(git ls-files '*.py')
       - name: Tests

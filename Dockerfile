@@ -2,13 +2,16 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    TIKTOKEN_CACHE_DIR=/app/.tiktoken
+    TIKTOKEN_CACHE_DIR=/app/.tiktoken \
+    NLTK_DATA=/app/nltk_data
 
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); tiktoken.get_encoding('o200k_base')"
+RUN python -m spacy download en_core_web_sm
+RUN python -m nltk.downloader -d /app/nltk_data cmudict
 
 COPY agents/ agents/
 COPY config/ config/
