@@ -9,6 +9,8 @@ from agents.locks import findBrokenLocks, extractLocks
 from agents.intent import detectIntent, describeIntent, findIntentChanges
 from agents.tokens import DEFAULT_TARGET
 
+from agents.hooks.orchestrator import OrchestrationHooks
+
 MAX_OPTIMIZATION_ATTEMPTS = 3 #Is three too little? too much? idk come back to it
 #Lock kinds listed for the Optimizer up front. Code, URLs and steps are left out: the system prompt
 #already says to copy them exactly, and repeating a long code block would cost more than it saves
@@ -76,52 +78,70 @@ def buildMustPreserve(prompt: str) -> list[str]:
 *    the final token/cost savings (if any), and the Optimizer's list of
 *    changes for the accepted rewrite is returned.
 """
-def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResult:
+def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHooks | None = None) -> OrchestrationResult:
+
+    # we do this so if we want to run it without hooks, we can!
+    hook = hook or OrchestrationHooks()
+
+    hook.updateStage("auditing")
     auditResult = auditPrompt(prompt, target)
+    hook.saveAudit(auditResult)
+
  
     if not auditResult.issues:
-        return OrchestrationResult(
+        orchestrationResult = OrchestrationResult(
             originalPrompt=prompt,
             finalPrompt=prompt,
             wasOptimized=False,
             auditResult=auditResult,
         )
+        hook.finishJob(orchestrationResult)
+        return orchestrationResult
  
     attempts: list[ValidationResult] = []
     rejectedAttempts: list[RejectedAttempt] = []
     mustPreserve = buildMustPreserve(prompt)
  
     for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
+        hook.updateStage("optimizing")
         optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
                                             rejectedAttempts=list(rejectedAttempts),
                                             mustPreserve=mustPreserve)
+        hook.saveOptimization(optimizationResult)
 
         #A rewrite that saves nothing (unchanged or longer) isn't worth a Validator call or a retry
         if optimizationResult.tokensSaved == 0:
             break
 
+        hook.updateStage("validating")
         #Free local check first: a rewrite that drops a code block, URL, rule, step, number or task
         #is REJECTED without paying for a Validator call then exact reasons go back to the Optimizer
         brokenLocks = (findBrokenLocks(prompt, optimizationResult.optimizedPrompt)
                        + findIntentChanges(prompt, optimizationResult.optimizedPrompt))
         if brokenLocks:
             reason = "Dropped or changed required parts: " + "; ".join(brokenLocks)
-            attempts.append(ValidationResult(
+
+            brokenLockValidation = ValidationResult(
                 originalPrompt=prompt,
                 optimizedPrompt=optimizationResult.optimizedPrompt,
                 qualityScore=0,
                 passed=False,
                 reasoning=reason,
                 reactTrace="Failed the local lock check, Validator not called.",
-            ))
+            )
+            attempts.append(brokenLockValidation)
             rejectedAttempts.append(RejectedAttempt(optimizationResult.optimizedPrompt, reason))
+            
+            hook.saveValidation(brokenLockValidation)
             continue
 
         validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
+        hook.saveValidation(validationResult)
+
         attempts.append(validationResult)
  
         if validationResult.passed:
-            return OrchestrationResult(
+            orchestrationResult = OrchestrationResult(
                 originalPrompt=prompt,
                 finalPrompt=optimizationResult.optimizedPrompt,
                 wasOptimized=True,
@@ -131,21 +151,25 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResul
                 percentSaved=optimizationResult.percentSaved,
                 changes=optimizationResult.changes,
             )
+            hook.finishJob(orchestrationResult)
+
+            return orchestrationResult
         
         #Feed the rejected rewrite and the Validator's reasoning back in so the next
         #attempt sees what it wrote and what that broke, instead of failing the same way again
         rejectedAttempts.append(
             RejectedAttempt(optimizationResult.optimizedPrompt, validationResult.reasoning)
         )
- 
     #No attempt passed validation within the retry amount SO fail gets closed.
-    return OrchestrationResult(
+    orchestrationResult = OrchestrationResult(
         originalPrompt=prompt,
         finalPrompt=prompt,
         wasOptimized=False,
         auditResult=auditResult,
         attempts=attempts,
     )
+    hook.finishJob(orchestrationResult)
+    return orchestrationResult
     
 if __name__ == "__main__":
     sample = ("Please, could you kindly help me write a short story? I would really appreciate it if you could make it about a dragon. Thank you so much!") 
