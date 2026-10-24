@@ -1,9 +1,16 @@
 import { useState, useEffect } from 'react';
 
+// websocket stage messages
+const STAGE_MESSAGES: Record<string, string> = {
+  auditing: "Calculating Cost...",
+  optimizing: "Cleaning Up...",
+  validating: "Double Checking...",
+  done: "Done!",
+};
+
 function Chatbox() {
   const [promptValue, setPromptValue] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const [sendMessage, setSendMessage] = useState("");
+  const [stage, setStage] = useState("");
   const [sendError, setSendError] = useState("");
 
   useEffect(() => {
@@ -27,52 +34,17 @@ function Chatbox() {
     });
   }, []);
 
-const GUEST_USER_ID = "00e5e341-5160-4908-9648-802a17def3ce";
-
-async function getGuestUserId() {
-  return GUEST_USER_ID;
-}
-
-  async function sendPrompt() {
-    const txtPrompt = promptValue.trim();
-    if (!txtPrompt) {
+  // MOCK: connects to the backend and shows each stage it sends back
+  function sendPrompt() {
+    if (!promptValue.trim()) {
       setSendError("Enter a prompt first.");
-      setSendMessage("");
       return;
     }
-
-    setIsSending(true);
     setSendError("");
-    setSendMessage("");
 
-    try {
-      const userId = await getGuestUserId();
-      const response = await fetch("http://127.0.0.1:8000/prompts/prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          txt_prompt: txtPrompt,
-          tokens: 0,
-          context: [],
-        }),
-      });
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.detail ?? `Backend request failed (${response.status}).`);
-      }
-
-      setSendMessage("The backend received prompt.");
-    } catch (error) {
-      setSendError(
-        error instanceof Error
-          ? error.message
-          : "Could not reach the backend",
-      );
-    } finally {
-      setIsSending(false);
-    }
+    const ws = new WebSocket(`${import.meta.env.VITE_API_URL.replace(/^http/, "ws")}/ws`);
+    ws.onmessage = (event) => setStage(JSON.parse(event.data).stage);
+    ws.onerror = () => setSendError("Could not reach the backend");
   }
 
   return (
@@ -92,12 +64,16 @@ async function getGuestUserId() {
             type="button"
             className="app-button"
             onClick={sendPrompt}
-            disabled={isSending}
           >
-            {isSending ? "Sending..." : "test"}
+            test
           </button>
         </div>
-        {sendMessage && <p role="status">{sendMessage}</p>}
+        {stage && (
+          <div className="progress" role="status">
+            {stage !== "done" && <span className="spinner" />}
+            {STAGE_MESSAGES[stage]}
+          </div>
+        )}
         {sendError && <p role="alert">{sendError}</p>}
       </div>
     </div>
