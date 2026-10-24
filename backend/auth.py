@@ -25,7 +25,8 @@ jwks_client = jwt.PyJWKClient(CLERK_JWKS_URL)
 def current_user(creds: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]) -> str:
     try:
         key = jwks_client.get_signing_key_from_jwt(creds.credentials).key
-        payload = jwt.decode(creds.credentials, key, algorithms=["RS256"])
+        # require exp and sub: PyJWT only checks exp if present, and sub is the user id
+        payload = jwt.decode(creds.credentials, key, algorithms=["RS256"], options={"require": ["exp", "sub"]})
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
     if payload.get("azp") and payload["azp"] not in ALLOWED_ORIGINS:
@@ -35,6 +36,7 @@ def current_user(creds: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBear
 # this makes sure to make a supabase client ONLY with the user's token
 # and it lets us inject it into the routes!
 def user_db(creds: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]) -> Client:
+    current_user(creds)
     return get_user_supabase(creds.credentials)
 
 # this basically lets us inject it and only write userdb instead of everything else lol
