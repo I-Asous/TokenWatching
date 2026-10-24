@@ -35,7 +35,7 @@ def test_cors_rejects_unknown_origin(client):
 
 
 def preflight(client, origin, method="POST", headers="authorization, content-type"):
-    return client.options("/prompts/prompt", headers={
+    return client.options("/prompts", headers={
         "Origin": origin,
         "Access-Control-Request-Method": method,
         "Access-Control-Request-Headers": headers,
@@ -85,7 +85,7 @@ def test_cors_rejects_lookalike_origins(client, origin):
 
 #A 401 still carries CORS headers, so the extension can read the error
 def test_cors_headers_on_unauthorized_response(client):
-    response = client.get("/prompts/users/x/prompts", headers={"Origin": EXTENSION_ORIGIN})
+    response = client.get("/prompts", headers={"Origin": EXTENSION_ORIGIN})
     assert response.status_code == 401
     assert response.headers["access-control-allow-origin"] == EXTENSION_ORIGIN
 
