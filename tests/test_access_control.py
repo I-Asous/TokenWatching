@@ -52,10 +52,7 @@ def test_rls_rejection_is_403(client, db, path, body):
 
 
 # --- known holes: these assert the secure behaviour and fail until the backend is fixed ---
-# strict xfail keeps CI green while documenting them; once a hole is fixed the test
-# "unexpectedly passes" and fails CI, as a reminder to delete its xfail marker
 
-@pytest.mark.xfail(strict=True, reason="known hole: data routes don't verify the token or its azp")
 @pytest.mark.parametrize("token", [
     pytest.param(make_token(exp=int(time.time()) - 10), id="expired"),
     pytest.param(make_token(azp="https://evil.example.com"), id="other-origin"),
@@ -68,7 +65,6 @@ def test_data_routes_reject_bad_tokens_themselves(client, db, token):
     assert not db.calls
 
 
-@pytest.mark.xfail(strict=True, reason="known hole: 500 responses echo the database error")
 def test_database_errors_are_not_leaked(client, db):
     db.fail_with("Database error: secret internal detail")
     response = client.get("/prompts", headers=bearer(make_token()))

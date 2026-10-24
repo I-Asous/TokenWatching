@@ -135,17 +135,13 @@ def test_orchestrator_rejects_bad_token(client, db, monkeypatch):
 
 
 # --- known holes: these assert the secure behaviour and fail until auth.py is fixed ---
-# strict xfail keeps CI green while documenting them; once a hole is fixed the test
-# "unexpectedly passes" and fails CI, as a reminder to delete its xfail marker
 
-@pytest.mark.xfail(strict=True, reason="known hole: jwt.decode doesn't require exp")
 def test_token_without_expiry_rejected(client, db):
     # PyJWT only checks exp when it is present, so a token without one never expires
     assert call_verified(client, make_token(drop=("exp",))).status_code == 401
     assert not db.calls
 
 
-@pytest.mark.xfail(strict=True, reason="known hole: a token without sub crashes with KeyError (500)")
 def test_token_without_subject_rejected(client, db):
     # payload["sub"] raises KeyError, which surfaces as a 500
     assert call_verified(client, make_token(drop=("sub",))).status_code == 401
