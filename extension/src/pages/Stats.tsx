@@ -1,9 +1,24 @@
 import "chart.js/auto";
-import { Chart, type ArcElement, type Plugin } from "chart.js";
+import { Chart, type Plugin } from "chart.js";
 import { useState } from "react";
-import { Bar, Doughnut } from "react-chartjs-2";
+import { Bar } from "react-chartjs-2";
 
 Chart.defaults.font.family = "Inter, Arial, sans-serif";
+
+const pastelBarColors = [
+  "#A7C7E7",
+  "#B7E4C7",
+  "#FFD6A5",
+  "#FFC8DD",
+  "#CDB4DB",
+  "#BDE0FE",
+  "#D8E2DC",
+  "#FBC4AB",
+  "#CDEAC0",
+  "#E4C1F9",
+  "#FAEDCB",
+  "#C9E4DE",
+];
 
 const barValueLabels: Plugin<"bar"> = {
   id: "barValueLabels",
@@ -26,102 +41,39 @@ const barValueLabels: Plugin<"bar"> = {
   },
 };
 
-const doughnutCallouts: Plugin<"doughnut"> = {
-  id: "doughnutCallouts",
-  afterDatasetsDraw(chart) {
-    const dataset = chart.data.datasets[0];
-    const meta = chart.getDatasetMeta(0);
-    if (!dataset || meta.data.length === 0) return;
-
-    const { ctx, chartArea } = chart;
-    const calloutX = chartArea.right + 8;
-    ctx.save();
-    ctx.font = "600 9px Inter, Arial, sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.lineWidth = 1.25;
-
-    const callouts = meta.data.map((element, index) => {
-      const arc = element as ArcElement;
-      const angle = (arc.startAngle + arc.endAngle) / 2;
-      return {
-        arc,
-        angle,
-        index,
-        startX: arc.x + Math.cos(angle) * (arc.outerRadius + 1),
-        startY: arc.y + Math.sin(angle) * (arc.outerRadius + 1),
-      };
-    }).sort((a, b) => a.startY - b.startY);
-
-    callouts.forEach(({ arc, angle, index, startX, startY }, order) => {
-      const color = index === 0 ? "#3B82F6" : "#EF4444";
-      const value = dataset.data[index];
-      const label = String(chart.data.labels?.[index] ?? "Value");
-      const targetY = chartArea.top + 24 + order * 42;
-      const onRight = Math.cos(angle) >= 0;
-      const outerX = onRight ? chartArea.right + 3 : chartArea.left - 3;
-      const labelStartX = calloutX + 6;
-
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(outerX, startY);
-      if (onRight) {
-        ctx.lineTo(outerX, targetY);
-      } else {
-        const routeY = targetY < arc.y ? chartArea.top + 2 : chartArea.bottom - 2;
-        ctx.lineTo(outerX, routeY);
-        ctx.lineTo(calloutX, routeY);
-        ctx.lineTo(calloutX, targetY);
-      }
-      ctx.lineTo(labelStartX - 3, targetY);
-      ctx.stroke();
-
-      // Keep the arrowhead at the slice so it points to the color being identified.
-      const radialX = Math.cos(angle);
-      const radialY = Math.sin(angle);
-      const baseX = startX + radialX * 6;
-      const baseY = startY + radialY * 6;
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(baseX - radialY * 3, baseY + radialX * 3);
-      ctx.lineTo(baseX + radialY * 3, baseY - radialX * 3);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.textAlign = "left";
-      ctx.fillText(`${label}: ${value}`, labelStartX, targetY, 64);
-    });
-
-    ctx.restore();
-  },
-};
-
-const doughnutOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  cutout: "64%",
-  layout: { padding: { left: 4, right: 70, top: 4, bottom: 4 } },
-  plugins: {
-    legend: { display: false },
-    tooltip: { enabled: true },
-  },
-};
-
 export default function Stats() {
   const [period, setPeriod] = useState<"week" | "month">("week");
   const chartLabels = period === "week"
     ? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     : ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  // Sample values for the selected period; replace with database data later.
+  // Mock prompt counts until this page reads prompt rows from the database.
   const chartValues = period === "week"
-    ? [20, 10, 40, 23, 43, 21, 31]
-    : [20, 10, 40, 23, 43, 21, 31, 21, 16, 18, 29, 15];
+    ? [2, 1, 4, 3, 5, 2, 3]
+    : [8, 10, 12, 9, 14, 16, 13, 18, 17, 20, 15, 19];
+
+  // Mock values until Stats reads the prompt and optimization data.
+  const todayPromptCount = 3;
+  const tokensSavedToday = 120; // Mock value until optimization data is available.
 
   return (
     <div className="Board1 stats-page">
+      <h4 className="activity-section-title">Prompt Activity</h4>
+      <div className="activity-grid">
+        <section className="activity-card" aria-label="Today's submitted prompt count">
+          <h5>Submitted Today</h5>
+          <strong className="activity-total">{todayPromptCount}</strong>
+          <span className="activity-caption">prompts</span>
+        </section>
+
+        <section className="activity-card" aria-label="Tokens saved today">
+          <h5>Tokens Saved Today</h5>
+          <strong className="activity-total">{tokensSavedToday}</strong>
+          <span className="activity-caption">tokens</span>
+        </section>
+      </div>
+
       <div className="stats-heading">
-        <h4>Tokens Saved by {period === "week" ? "Week" : "Month"}</h4>
+        <h4>Prompts Submitted by {period === "week" ? "Week" : "Month"}</h4>
         <label className="stats-filter">
           View
           <select
@@ -135,25 +87,26 @@ export default function Stats() {
         </label>
       </div>
 
-      <div className="stats-bar-chart" aria-label="Tokens saved chart">
+      <div className="stats-bar-chart" aria-label="Prompt submissions chart">
         <Bar
           data={{
             labels: chartLabels,
             datasets: [{
-              label: "Tokens saved",
+              label: "Prompts submitted",
               data: chartValues,
-              backgroundColor: "#3B82F6",
+              backgroundColor: chartLabels.map((_, index) => pastelBarColors[index % pastelBarColors.length]),
               borderRadius: 5,
             }],
           }}
           options={{
             responsive: true,
             maintainAspectRatio: false,
+            layout: { padding: { top: 18 } },
             plugins: { legend: { display: false } },
             scales: {
               y: {
                 beginAtZero: true,
-                title: { display: true, text: "Tokens" },
+                title: { display: true, text: "Prompts" },
               },
             },
           }}
@@ -161,46 +114,6 @@ export default function Stats() {
         />
       </div>
 
-      <h4 className="donut-section-title">Today</h4>
-      <div className="donut-grid">
-        <section className="donut-card" aria-label="Today's token usage">
-          <h5>Token Usage</h5>
-          <div className="donut-chart">
-            <Doughnut
-              data={{
-                labels: ["Used", "Left"],
-                datasets: [{
-                  label: "Tokens",
-                  data: [20, 10],
-                  backgroundColor: ["#3B82F6", "#EF4444"],
-                  borderWidth: 0,
-                }],
-              }}
-              options={doughnutOptions}
-              plugins={[doughnutCallouts]}
-            />
-          </div>
-        </section>
-
-        <section className="donut-card" aria-label="Today's token savings">
-          <h5>Token Savings</h5>
-          <div className="donut-chart">
-            <Doughnut
-              data={{
-                labels: ["Saved", "Left"],
-                datasets: [{
-                  label: "Tokens",
-                  data: [30, 10],
-                  backgroundColor: ["#3B82F6", "#EF4444"],
-                  borderWidth: 0,
-                }],
-              }}
-              options={doughnutOptions}
-              plugins={[doughnutCallouts]}
-            />
-          </div>
-        </section>
-      </div>
     </div>
   );
 }

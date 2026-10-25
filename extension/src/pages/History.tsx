@@ -25,27 +25,24 @@ export default function History() {
     <main className="Board1 history-page">
       <header className="history-heading">
         <h4>Conversation History</h4>
-        <p>Review prompts and their results.</p>
       </header>
-
-      <div className="history-sample-note">Sample conversations · preview only</div>
 
       <section className="history-conversations" aria-label="Sample saved prompt conversations">
         {sampleHistory.map((item) => (
-          <article className="history-item" key={item.id}>
+          <details className="history-item" key={item.id}>
+            <summary className="history-item-summary">
             <div className="history-item-header">
               <span>Conversation {item.id}</span>
               <time>{item.time}</time>
             </div>
-            <div className="history-message history-prompt">
-              <span className="history-message-label">You</span>
-              <p>{item.prompt}</p>
-            </div>
+              <p className="history-preview">{item.prompt}</p>
+              <span className="history-expand-hint">Tap to view result</span>
+            </summary>
             <div className="history-message history-result">
               <span className="history-message-label">Result</span>
               <p>{item.result}</p>
             </div>
-          </article>
+          </details>
         ))}
       </section>
     </main>

@@ -322,41 +322,50 @@ input:not(:placeholder-shown) + .lableLine {
 }
 
 .stats-bar-chart {
-  height: 230px;
+  height: 260px;
   margin: 0 12px 12px;
 }
 
-.donut-section-title {
+.activity-section-title {
   margin: 18px 0 10px;
 }
 
-.donut-grid {
+.activity-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   padding: 0 10px;
 }
 
-.donut-card {
+.activity-card {
   min-width: 0;
+  min-height: 116px;
   box-sizing: border-box;
-  padding: 0 8px 10px;
-  overflow: hidden;
+  padding: 12px;
   border: 1px solid #E5E5E5;
   border-radius: 12px;
   background: #FFFFFF;
+  text-align: left;
 }
 
-.donut-card h5 {
-  margin: 10px 0 0;
+.activity-card h5 {
+  margin: 0 0 10px;
   color: #171717;
   font-size: 13px;
-  text-align: center;
 }
 
-.donut-chart {
-  width: 100%;
-  height: 118px;
+.activity-total {
+  display: block;
+  color: #171717;
+  font-size: 32px;
+  line-height: 1;
+}
+
+.activity-caption {
+  display: block;
+  margin-top: 5px;
+  color: #666666;
+  font-size: 11px;
 }
 
 .history-page {
@@ -371,22 +380,6 @@ input:not(:placeholder-shown) + .lableLine {
   margin: 12px 0 4px;
 }
 
-.history-heading p {
-  margin: 0 0 16px;
-  color: #666666;
-  font-size: 13px;
-}
-
-.history-sample-note {
-  align-self: flex-start;
-  margin: 0 0 10px;
-  padding: 6px 9px;
-  border-radius: 999px;
-  background: #F0F0F0;
-  color: #555555;
-  font-size: 11px;
-}
-
 .history-conversations {
   display: flex;
   flex: 1;
@@ -396,11 +389,27 @@ input:not(:placeholder-shown) + .lableLine {
 }
 
 .history-item {
-  padding: 10px;
+  padding: 0;
   border: 1px solid #E5E5E5;
   border-radius: 12px;
   background: #FFFFFF;
   text-align: left;
+}
+
+.history-item-summary {
+  padding: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.history-item-summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-item-summary:focus-visible {
+  outline: 2px solid #3B82F6;
+  outline-offset: -3px;
+  border-radius: 12px;
 }
 
 .history-item-header {
@@ -422,16 +431,46 @@ input:not(:placeholder-shown) + .lableLine {
   white-space: nowrap;
 }
 
+.history-preview {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #333333;
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.history-expand-hint {
+  display: block;
+  margin-top: 6px;
+  color: #777777;
+  font-size: 10px;
+}
+
+.history-item[open] .history-item-summary {
+  border-bottom: 1px solid #E5E5E5;
+}
+
+.history-item .history-message {
+  margin-right: 10px;
+  margin-left: 10px;
+}
+
+.history-item > .history-message:first-of-type {
+  margin-top: 10px;
+}
+
+.history-item > .history-message:last-child {
+  margin-bottom: 10px;
+}
+
 .history-message {
   padding: 9px;
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.45;
-}
-
-.history-prompt {
-  background: #111111;
-  color: #FFFFFF;
 }
 
 .history-result {
