@@ -1,9 +1,9 @@
-from repository.client import get_supabase
+from supabase import Client
 
 # return specific users org prompt+optimized prompt
-def get_user_input_and_optimized_prompts(user_id: str) -> list[dict]:
+def get_user_input_and_optimized_prompts(db: Client) -> list[dict]:
    try:
-      response = get_supabase().table("prompt_with_optimized").select("*").eq("user_id", str(user_id)).execute()
+      response = db.table("prompt_with_optimized").select("*").execute()
       # if there is data, return it
       # need to figure what to do if there is no data... hmmhmmhmm
       return response.data
@@ -13,9 +13,9 @@ def get_user_input_and_optimized_prompts(user_id: str) -> list[dict]:
 
 
 # return a specific users 1 prompt + optimized version of it
-def get_user_prompt_w_optimized(user_id: str, prompt_id: int):
+def get_user_prompt_w_optimized(db: Client, prompt_id: int):
    try:
-      response = get_supabase().table("prompt_with_optimized").select("*").eq("user_id", str(user_id)).eq("org_prompt_id", prompt_id).execute()
+      response = db.table("prompt_with_optimized").select("*").eq("org_prompt_id", prompt_id).execute()
       print(response.data)
 
       # if there is data, return it

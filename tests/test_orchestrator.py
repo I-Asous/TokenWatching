@@ -21,13 +21,15 @@ class FakeAgents:
         self.rejectedCalls = []
         self.validatorCalls = []
         self.targets = []
+        self.preserveCalls = []
 
     def auditPrompt(self, prompt, target):
         self.targets.append(target)
         return AuditResult(token_count=20, estimatedCost=0.0, issues=self.issues, severity="Medium")
 
-    def optimizePrompt(self, prompt, issues, target, rejectedAttempts=None):
+    def optimizePrompt(self, prompt, issues, target, rejectedAttempts=None, mustPreserve=None):
         self.targets.append(target)
+        self.preserveCalls.append(list(mustPreserve or []))
         rewrite, tokensSaved = self.rewrites[len(self.optimizerCalls)]
         self.optimizerCalls.append(list(issues))
         self.rejectedCalls.append(list(rejectedAttempts or []))
@@ -122,14 +124,14 @@ def test_runPipeline_retries_with_validator_feedback(fakeAgents):
 def test_runPipeline_passes_all_rejected_attempts(fakeAgents):
     fake = fakeAgents(
         issues=["filler"],
-        rewrites=[("Write a story.", 15), ("Write about a dragon.", 14), (REWRITE, 12)],
-        verdicts=[(False, "Dropped the dragon."), (False, "Dropped short story."), (True, "Fine.")],
+        rewrites=[("Write a story.", 15), ("Write a short story.", 14), (REWRITE, 12)],
+        verdicts=[(False, "Dropped the dragon and 'short'."), (False, "Dropped the dragon."), (True, "Fine.")],
     )
     orchestrator.runPipeline(PROMPT)
 
     assert fake.rejectedCalls[2] == [
-        RejectedAttempt("Write a story.", "Dropped the dragon."),
-        RejectedAttempt("Write about a dragon.", "Dropped short story."),
+        RejectedAttempt("Write a story.", "Dropped the dragon and 'short'."),
+        RejectedAttempt("Write a short story.", "Dropped the dragon."),
     ]
 
 #Retry feedback never leaks into the audit's own issue list
@@ -168,6 +170,89 @@ def test_runPipeline_respects_max_attempts(fakeAgents, monkeypatch):
 
     assert len(fake.optimizerCalls) == 1
     assert result.finalPrompt == PROMPT
+
+SQL_PROMPT = "Please write SQL for me. Always use parameterized queries to prevent SQL injection. Thanks so much!"
+SQL_DROPPED = "Write SQL."
+SQL_KEPT = "Write SQL. Always use parameterized queries."
+
+#A rewrite that breaks a lock is rejected without a Validator call, and the retry is told what it dropped
+def test_runPipeline_broken_lock_skips_validator_and_retries(fakeAgents):
+    fake = fakeAgents(
+        issues=["filler"],
+        rewrites=[(SQL_DROPPED, 15), (SQL_KEPT, 10)],
+        verdicts=[(True, "Only filler removed.")],
+    )
+    result = orchestrator.runPipeline(SQL_PROMPT)
+
+    assert fake.validatorCalls == [SQL_KEPT]
+    retryFeedback = fake.rejectedCalls[1]
+    assert len(retryFeedback) == 1
+    assert retryFeedback[0].rewrite == SQL_DROPPED
+    assert "constraint dropped" in retryFeedback[0].reason and "parameterized" in retryFeedback[0].reason
+
+    assert result.finalPrompt == SQL_KEPT
+    assert result.wasOptimized is True
+    first, second = result.attempts
+    assert first.passed is False and first.qualityScore == 0
+    assert first.reactTrace == "Failed the local lock check, Validator not called."
+    assert second.passed is True
+
+#A rewrite that changes the task is rejected without a Validator call, like a broken lock
+def test_runPipeline_changed_task_skips_validator_and_retries(fakeAgents):
+    prompt = "Hi! Could you please explain how recursion works? Thanks!"
+    kept = "Explain how recursion works."
+    fake = fakeAgents(
+        issues=["filler"],
+        rewrites=[("Write a recursive function.", 8), (kept, 6)],
+        verdicts=[(True, "Only filler removed.")],
+    )
+    result = orchestrator.runPipeline(prompt)
+
+    assert fake.validatorCalls == [kept]
+    reason = fake.rejectedCalls[1][0].reason
+    assert "task dropped or changed" in reason and "explain" in reason
+    assert result.finalPrompt == kept
+
+#A dropped or changed number is rejected without a Validator call
+def test_runPipeline_changed_number_skips_validator(fakeAgents):
+    prompt = "Please write me a product description in under 150 words. Thank you!"
+    fake = fakeAgents(issues=["filler"], rewrites=[("Write a product description under 100 words.", 8)] * 3)
+    result = orchestrator.runPipeline(prompt)
+
+    assert fake.validatorCalls == []
+    assert '"150"' in fake.rejectedCalls[1][0].reason
+    assert result.finalPrompt == prompt
+
+#The Optimizer is told the prompt's tasks, rules and numbers on every attempt, not only after a rejection
+def test_runPipeline_passes_must_preserve(fakeAgents):
+    prompt = "Hi! Please write a 300-word bio for our CEO. Do not mention their age. Thanks!"
+    fake = fakeAgents(issues=["filler"], rewrites=[("Write a bio.", 15), (prompt, 0)], verdicts=[])
+    orchestrator.runPipeline(prompt)
+
+    assert len(fake.preserveCalls) == 2 and fake.preserveCalls[0] == fake.preserveCalls[1]
+    assert fake.preserveCalls[0] == ['task: write "a 300-word bio"', "rule: Do not mention their age.", "number: 300"]
+
+#buildMustPreserve lists tasks first, then rules and numbers; code blocks and URLs are left to the system prompt
+def test_buildMustPreserve():
+    prompt = ("Fix this function. Never change its name. It must run in under 2 seconds.\n"
+              "```python\ndef add(a, b): return a - b\n```\nDocs: https://example.com/add")
+    items = orchestrator.buildMustPreserve(prompt)
+    assert items[0] == 'task: fix "this function"'
+    assert "rule: Never change its name." in items
+    assert "number: 2" in items
+    assert not any("example.com" in item or "def add" in item for item in items)
+
+#If every rewrite breaks a lock, the Validator is never called and the original prompt is returned
+def test_runPipeline_every_rewrite_breaks_lock_returns_original(fakeAgents):
+    attempts = orchestrator.MAX_OPTIMIZATION_ATTEMPTS
+    fake = fakeAgents(issues=["filler"], rewrites=[(SQL_DROPPED, 15)] * attempts)
+    result = orchestrator.runPipeline(SQL_PROMPT)
+
+    assert fake.validatorCalls == []
+    assert len(fake.optimizerCalls) == attempts
+    assert len(result.attempts) == attempts
+    assert result.finalPrompt == SQL_PROMPT
+    assert result.wasOptimized is False
 
 #A rewrite that saves no tokens (unchanged or longer) is not validated, retried or returned
 @pytest.mark.parametrize("rewrite", [PROMPT, PROMPT + " Make it as detailed as you possibly can."])

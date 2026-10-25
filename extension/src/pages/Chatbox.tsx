@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from "react";
 
 type ChatTurn = {
   id: number;
@@ -13,6 +13,14 @@ const promptExamples = [
   "Summarize these notes into three clear action items.",
 ];
 
+// The backend currently sends mock progress stages over its websocket.
+const STAGE_MESSAGES: Record<string, string> = {
+  auditing: "Calculating Cost...",
+  optimizing: "Cleaning Up...",
+  validating: "Double Checking...",
+  done: "Done!",
+};
+
 function Chatbox() {
   const [promptValue, setPromptValue] = useState("");
   const [promptExampleIndex, setPromptExampleIndex] = useState(0);
@@ -20,26 +28,17 @@ function Chatbox() {
   const [isSending, setIsSending] = useState(false);
   const [sendMessage, setSendMessage] = useState("");
   const [sendError, setSendError] = useState("");
+  const [stage, setStage] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
 
   useEffect(() => {
-    // 1. Find the active tab when Chatbox loads
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs[0];
-      
-      if (activeTab?.id) {
-        // 2. Ask the content script for ChatGPT's prompt text
-        chrome.tabs.sendMessage(
-          activeTab.id, 
-          { action: "get_chatgpt_text" }, 
-          (response) => {
-            // 3. Put the response into extension
-            if (response && response.promptText) {
-              setPromptValue(response.promptText);
-            }
-          }
-        );
-      }
+      if (!activeTab?.id) return;
+
+      chrome.tabs.sendMessage(activeTab.id, { action: "get_chatgpt_text" }, (response) => {
+        if (response?.promptText) setPromptValue(response.promptText);
+      });
     });
   }, []);
 
@@ -76,72 +75,82 @@ function Chatbox() {
     setIsSending(true);
     setSendError("");
     setSendMessage("");
+    setStage("");
 
+    const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
     try {
-      const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
       const response = await fetch(`${apiBaseUrl}/prompts/guest-prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          txt_prompt: txtPrompt,
-        }),
+        body: JSON.stringify({ txt_prompt: txtPrompt }),
       });
-      const result = await response.json().catch(() => ({}));
+      const responseData = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(result.detail ?? `Backend request failed (${response.status}).`);
+        throw new Error(responseData.detail ?? `Backend request failed (${response.status}).`);
       }
 
       setTurns((previousTurns) => [
         ...previousTurns,
-        {
-          id: Date.now(),
-          prompt: txtPrompt,
-          result: null,
-        },
+        { id: Date.now(), prompt: txtPrompt, result: null },
       ]);
       setPromptValue("");
       setSendMessage("Prompt saved. Optimization results are not connected yet.");
     } catch (error) {
-      setSendError(
-        error instanceof Error
-          ? error.message
-          : "Could not reach the backend",
-      );
-    } finally {
+      setSendError(error instanceof Error ? error.message : "Could not reach the backend");
+      setIsSending(false);
+      return;
+    }
+
+    // Keep main's progress-stage UI. The current backend websocket sends mock stages.
+    try {
+      const socketUrl = `${apiBaseUrl.replace(/^http/, "ws")}/ws`;
+      const socket = new WebSocket(socketUrl);
+      socket.onmessage = (event) => {
+        try {
+          const progress = JSON.parse(event.data) as { stage?: string };
+          if (progress.stage) setStage(progress.stage);
+        } catch {
+          setSendError("Received an unreadable progress update.");
+        }
+      };
+      socket.onerror = () => {
+        setSendError("Prompt saved, but progress updates could not connect.");
+        setIsSending(false);
+      };
+      socket.onclose = () => setIsSending(false);
+    } catch {
+      setSendError("Prompt saved, but progress updates could not connect.");
       setIsSending(false);
     }
   }
+
   return (
     <div>
       <div className="Board1">
         <h4 className="enter">Enter Prompt</h4>
 
-        {}
-
         <div className="chat-history">
-  {turns.map((turn) => (
-    <div className="chat-turn" key={turn.id}>
-      <div className="chat-message user-message">
-<span className="message-label">You</span>
-    <p>{turn.prompt}</p>
-  </div>
-
-  <div className="chat-message result-message">
-    <span className="message-label">Result</span>
-    <p>{turn.result ?? "No optimized result yet."}</p>
-
-      </div>
-    </div>
-  ))}
-</div>
+          {turns.map((turn) => (
+            <div className="chat-turn" key={turn.id}>
+              <div className="chat-message user-message">
+                <span className="message-label">You</span>
+                <p>{turn.prompt}</p>
+              </div>
+              <div className="chat-message result-message">
+                <span className="message-label">Result</span>
+                <p>{turn.result ?? "No optimized result yet."}</p>
+              </div>
+            </div>
+          ))}
+        </div>
 
         <div className="prompt-input-wrap">
           <textarea
             className="promptext"
             value={promptValue}
             aria-label="Enter a prompt"
-            onChange={(e) => setPromptValue(e.target.value)}
+            onChange={(event) => setPromptValue(event.target.value)}
           />
           {!promptValue && (
             <div
@@ -165,6 +174,12 @@ function Chatbox() {
           </button>
         </div>
         {sendMessage && <p role="status">{sendMessage}</p>}
+        {stage && (
+          <div className="progress" role="status">
+            {stage !== "done" && <span className="spinner" />}
+            {STAGE_MESSAGES[stage] ?? stage}
+          </div>
+        )}
         {sendError && <p role="alert">{sendError}</p>}
       </div>
     </div>

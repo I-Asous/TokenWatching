@@ -29,6 +29,10 @@ jobs:
           cache-dependency-path: requirements*.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Download spaCy model and NLTK cmudict
+        run: |
+          python -m spacy download en_core_web_sm
+          python -m nltk.downloader cmudict
       - name: Pylint
         run: pylint --rcfile=pylintrc.toml $(git ls-files '*.py')
       - name: Tests
@@ -65,15 +69,17 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: extension/package-lock.json
       - run: npm ci
+        working-directory: extension
       - name: Build extension
         run: npm run build
+        working-directory: extension
       - name: Validate manifest and package
-        run: python scripts/package_extension.py
+        run: python scripts/package_extension.py --src extension/dist --out extension/dist
       - name: Upload extension zip
         uses: actions/upload-artifact@v7
         with:
           name: extension
-          path: dist/*.zip
+          path: extension/dist/*.zip
           retention-days: 14
