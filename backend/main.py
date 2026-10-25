@@ -7,9 +7,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 ### END DEVELOPMENT PURPOSES
 
+import asyncio
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -43,3 +44,16 @@ app.include_router(router)
 @app.get("/")
 async def root():
    return {"message": "this is our epic app..."}
+
+# Mock Websockets
+@app.websocket("/ws")
+async def progress(websocket: WebSocket):
+    # CORS
+    if websocket.headers.get("origin") not in ALLOWED_ORIGINS:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    for stage in ("auditing", "optimizing", "validating", "done"):
+        await websocket.send_json({"stage": stage})
+        await asyncio.sleep(1)
+    await websocket.close()
