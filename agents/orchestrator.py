@@ -7,6 +7,7 @@ from agents.optimizer import optimizePrompt, OptimizationResult, RejectedAttempt
 from agents.validator import validatePrompt, ValidationResult
 from agents.locks import findBrokenLocks, extractLocks
 from agents.intent import detectIntent, describeIntent, findIntentChanges
+from agents.vagueness import findVagueness, findOptionalMarkers, findDroppedOptions, VaguenessReport
 from agents.tokens import DEFAULT_TARGET
 
 MAX_OPTIMIZATION_ATTEMPTS = 3 #Is three too little? too much? idk come back to it
@@ -24,13 +25,18 @@ class OrchestrationResult:
     tokensSaved: int = 0
     percentSaved: float = 0.0
     changes: list[str] = field(default_factory=list)
+    #How vague the original is, with clarifying questions for the extension to ask. The Optimizer never
+    #fills these gaps itself, since any guess changes the request
+    vagueness: VaguenessReport = field(default_factory=VaguenessReport)
 
 """
 * @brief Lists what a rewrite of this prompt must keep, for the Optimizer's message.
 * @post
 * 1. Each task the prompt asks for (intent.py) comes first, as "task: ..." lines.
 * 2. Then every constraint and number lock (locks.py), as "rule: ..." and "number: ..." lines.
-* 3. These are the same things the local checks reject a rewrite for, so the Optimizer sees
+* 3. Then every optional request ("Maybe add tests."), as "optional: ..." lines, so the "maybe"
+*    isn't cut as filler.
+* 4. These are the same things the local checks reject a rewrite for, so the Optimizer sees
 *    them before its first attempt instead of only after a rejection.
 """
 def buildMustPreserve(prompt: str) -> list[str]:
@@ -38,6 +44,7 @@ def buildMustPreserve(prompt: str) -> list[str]:
     for lock in extractLocks(prompt):
         if lock.kind in PRESERVE_LOCK_KINDS:
             items.append(f"{'rule' if lock.kind == 'constraint' else lock.kind}: {lock.text}")
+    items += [f"optional (keep it optional): {sentence}" for sentence in findOptionalMarkers(prompt)]
     return items
 
 """
@@ -57,7 +64,8 @@ def buildMustPreserve(prompt: str) -> list[str]:
 *    plus, on retries, every earlier rewrite the Validator rejected along with its reason.
 * 3. The rewrite is first checked locally against the original's locks (code blocks,
 *    inline code, URLs, rules, numbered steps, numbers, see locks.py) and its tasks
-*    (a dropped or changed task, see intent.py). If anything is broken,
+*    (a dropped or changed task, see intent.py) and its options (a "maybe" that was cut,
+*    see vagueness.py). If anything is broken,
 *    the attempt fails without a Validator call and those reasons are
 *    passed back to the Optimizer. Otherwise the Validator checks the rewrite
 *    against the original prompt.
@@ -72,12 +80,15 @@ def buildMustPreserve(prompt: str) -> list[str]:
 * 7. If no attempt passes, the original prompt is returned unchanged,
 *    a rewrite the Validator rejected is never sent, even if it would
 *    have saved tokens.
-* 8. An OrchestrationResult capturing every attempt, the audit findings,
+* 8. The original's vagueness report (vagueness.py) is attached to every result, including when
+*    optimization is skipped, so the extension can ask its clarifying questions.
+* 9. An OrchestrationResult capturing every attempt, the audit findings,
 *    the final token/cost savings (if any), and the Optimizer's list of
 *    changes for the accepted rewrite is returned.
 """
 def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResult:
     auditResult = auditPrompt(prompt, target)
+    vagueness = findVagueness(prompt)
  
     if not auditResult.issues:
         return OrchestrationResult(
@@ -85,6 +96,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResul
             finalPrompt=prompt,
             wasOptimized=False,
             auditResult=auditResult,
+            vagueness=vagueness,
         )
  
     attempts: list[ValidationResult] = []
@@ -100,10 +112,11 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResul
         if optimizationResult.tokensSaved == 0:
             break
 
-        #Free local check first: a rewrite that drops a code block, URL, rule, step, number or task
+        #Free local check first: a rewrite that drops a code block, URL, rule, step, number, task or option
         #is REJECTED without paying for a Validator call then exact reasons go back to the Optimizer
         brokenLocks = (findBrokenLocks(prompt, optimizationResult.optimizedPrompt)
-                       + findIntentChanges(prompt, optimizationResult.optimizedPrompt))
+                       + findIntentChanges(prompt, optimizationResult.optimizedPrompt)
+                       + findDroppedOptions(prompt, optimizationResult.optimizedPrompt))
         if brokenLocks:
             reason = "Dropped or changed required parts: " + "; ".join(brokenLocks)
             attempts.append(ValidationResult(
@@ -130,6 +143,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResul
                 tokensSaved=optimizationResult.tokensSaved,
                 percentSaved=optimizationResult.percentSaved,
                 changes=optimizationResult.changes,
+                vagueness=vagueness,
             )
         
         #Feed the rejected rewrite and the Validator's reasoning back in so the next
@@ -145,6 +159,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET) -> OrchestrationResul
         wasOptimized=False,
         auditResult=auditResult,
         attempts=attempts,
+        vagueness=vagueness,
     )
     
 if __name__ == "__main__":

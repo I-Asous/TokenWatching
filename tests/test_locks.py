@@ -102,7 +102,13 @@ def test_extractLocks_finds_numbers():
 #A changed number is a broken lock, even inside a constraint whose words all survived
 def test_findBrokenLocks_changed_number():
     reasons = findBrokenLocks("Never return more than 100 rows.", "Never return more than 10 rows.")
-    assert reasons == ['number dropped or changed: "100" (in "Never return more than 100 rows.")']
+    assert reasons == ['number dropped or changed: "100" (in "Never return more than 100 rows.")',
+                       'number added that the original didn\'t give: "10" (don\'t guess details the person didn\'t state)']
+
+#A number the original never gave is a guess, so it's rejected too
+def test_findBrokenLocks_added_number():
+    reasons = findBrokenLocks("Please write a short story about a dragon.", "Write a 500-word story about a dragon.")
+    assert any('number added' in reason and '"500"' in reason for reason in reasons)
 
 #Numbers may be written as digits or words, and with or without thousands commas
 @pytest.mark.parametrize("original, rewrite", [

@@ -148,6 +148,8 @@ Never change, and copy exactly:
 - Examples the person gave, and the order of any steps.
 - The language the prompt is written in.
 - Context that changes the answer, such as the audience, or the reason behind a constraint (an injury that rules out exercises).
+- Options ("maybe add tests", "if possible, use TypeScript"). Here "maybe" isn't hedging: cutting it turns an option into a requirement.
+- How specific the prompt is. If it's vague ("make it better", "a few examples", "fix this" with nothing attached), keep it exactly as vague. Never add a length, number, audience, criterion or detail the person didn't give: any guess changes what they asked for.
 
 Don't bother:
 - Edits that only swap a word for a synonym, or only drop "please" from an otherwise direct prompt. They save a token at most, and changing the first word can even make a prompt longer in tokens. Mark these prompts unchanged instead.
