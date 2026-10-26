@@ -1,7 +1,5 @@
 # TODO: so many imports can we like not...
 
-from datetime import datetime, timezone
-
 # from agents.orchestrator import runPipeline 
 # from schema.orchestrator import OrchestrationResult
 from dataclasses import dataclass, field
@@ -56,8 +54,7 @@ class RunOrchestrator(OrchestrationHooks):
             update_orchestration(self.db, self.run_id, OrchestrationUpdate(
                 status="failed",
                 error_stage=self.status if self.status != "pending" else "other",
-                error_message=str(e),
-                finished_at=datetime.now(timezone.utc)))
+                error_message=str(e)))
             raise RuntimeError(f"Orchestration error: {str(e)}") from e
 
     # allows something else (ex. orchestrator, agent) to update what stage they're currently at
@@ -120,6 +117,5 @@ def structure_response(result, user_id: str, run_id=None, optimized_prompt_id=No
                                 reasoning=result.reasoning, react_trace=result.reactTrace)
     
     if isinstance(result, OrchestrationResult):
-        return OrchestrationUpdate(status="done", final_optimized_prompt_id=final_optimized_prompt_id,
-                                   finished_at=datetime.now(timezone.utc))
+        return OrchestrationUpdate(status="done", final_optimized_prompt_id=final_optimized_prompt_id)
     raise TypeError(f"{type(result).__name__} is not a value type to structure...")
