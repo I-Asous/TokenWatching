@@ -15,7 +15,7 @@ def read_user_contexts(db: UserDB, prompt_id: int | None = None):
             return context_repository.get_user_contexts(db)
         return context_repository.get_user_prompt_contexts(db, prompt_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=f"read_user_contexts: {exc}") from exc
 
 
 # save context
@@ -26,5 +26,5 @@ def create_context(db: UserDB, context: ContextCreate):
     except RuntimeError as exc:
         # 42501 is the postgres error an RLS policy violation raises
         if "42501" in str(exc):
-            raise HTTPException(status_code=403, detail="Not your data") from exc
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=403, detail="create_context: Not your data") from exc
+        raise HTTPException(status_code=500, detail=f"create_context: {exc}") from exc

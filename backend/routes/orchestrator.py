@@ -17,4 +17,4 @@ def orchestrator(body: OrchestrationRequest, user_id: Annotated[str, Depends(cur
     try:
         return RunOrchestrator(user_id=user_id, prompt=body.prompt, target=body.target).execute()
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=f"orchestrator: {e}") from e
