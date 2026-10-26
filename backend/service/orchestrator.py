@@ -13,11 +13,13 @@ from agents.orchestrator import OrchestrationResult, runPipeline
 from agents.validator import ValidationResult
 from repository.audit import create_audit
 from repository.client import get_supabase
+from repository.llm_call import create_llm_call
 from repository.orchestration import create_orchestration, update_orchestration, update_orchestration_status
 from repository.prompts import create_prompt
 from repository.optimized_prompts import create_optimized_prompt
 
 from repository.validation import create_validation
+from schema.llm_call import LlmCall
 from schema.optimized_prompts import OptimizedPromptInsert
 from schema.orchestration import OrchestrationInsert, OrchestrationUpdate
 from schema.prompts import PromptInsert
@@ -85,6 +87,10 @@ class RunOrchestrator(OrchestrationHooks):
             self.final_optimized_prompt_id = self.last_optimized_prompt_id
         else:
             self.last_rejected_validation_id = savedValidation[0]["validation_id"]
+
+    # save an llm call (unsure how it will be set up so needs fine tuning)
+    def saveLLMCall(self, result: LlmCall):
+        create_llm_call(result)
 
     # orchestrator is done with it's job and we can update it with any necessary information
     def finishJob(self, result: OrchestrationResult):
