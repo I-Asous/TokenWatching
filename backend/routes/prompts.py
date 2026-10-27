@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from auth import UserDB
 from repository import prompts as prompt_repository
 from schema.prompts import Prompt, PromptCreate
 
@@ -7,18 +8,18 @@ router = APIRouter()
 
 
 # return a specific users original prompts
-@router.get("/users/{user_id}/prompts", response_model=list[Prompt])
-def read_user_prompts(user_id: str):
+@router.get("", response_model=list[Prompt])
+def read_user_prompts(db: UserDB):
     try:
-        return prompt_repository.get_user_input_prompts(user_id)
+        return prompt_repository.get_user_input_prompts(db)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 # return a specific users 1 prompt
-@router.get("/users/{user_id}/prompt/{prompt_id}")
-def read_user_prompt_with_optimized(user_id: str, prompt_id: int):
+@router.get("/{prompt_id}")
+def read_user_prompt_with_optimized(db: UserDB, prompt_id: int):
     try:
-        result = prompt_repository.get_user_input_prompt(user_id, prompt_id)
+        result = prompt_repository.get_user_input_prompt(db, prompt_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     if result is None:
@@ -26,18 +27,21 @@ def read_user_prompt_with_optimized(user_id: str, prompt_id: int):
     return result
 
 # user submits a prompt
-@router.post("/prompt", response_model=list[Prompt], status_code=201)
-def create_prompt(prompt: PromptCreate):
+@router.post("", response_model=list[Prompt], status_code=201)
+def create_prompt(db: UserDB, prompt: PromptCreate):
     try:
-        return prompt_repository.create_prompt(prompt)
+        return prompt_repository.create_prompt(db, prompt)
     except RuntimeError as exc:
+        # 42501 is the postgres error an RLS policy violation raises
+        if "42501" in str(exc):
+            raise HTTPException(status_code=403, detail="Not your data") from exc
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # delete a prompt
-@router.delete("/prompts/{prompt_id}")
-def remove_prompt(prompt_id: int):
+@router.delete("/{prompt_id}")
+def remove_prompt(db: UserDB, prompt_id: int):
     try:
-        return prompt_repository.delete_prompt(prompt_id)
+        return prompt_repository.delete_prompt(db, prompt_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
