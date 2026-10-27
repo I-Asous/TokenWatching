@@ -33,6 +33,20 @@ def test_buildUserMessage_labels_both_prompts():
     message = validator.buildUserMessage("Please write a poem.", "Write a poem.")
     assert message == "original prompt:\nPlease write a poem.\n\noptimized prompt:\nWrite a poem."
 
+#Type rules come first, one bullet per type, with the note that weakening one is a loss
+def test_buildUserMessage_with_type_rules():
+    message = validator.buildUserMessage("Please fix my code.", "Fix my code.",
+                                         typeRules="Code prompt: never change code.\nSecurity prompt: keep every rule.")
+    assert "- Code prompt: never change code.\n- Security prompt: keep every rule." in message
+    assert "meaningful loss (score 3-5)" in message
+    assert message.index("Code prompt") < message.index("original prompt:") < message.index("optimized prompt:")
+
+#The type rules reach the request sent to the LLM
+def test_validatePrompt_sends_type_rules(fakeClient):
+    messages = fakeClient("SCORE: 8\nPASSED: Yes\nREASON: Fine.")
+    validator.validatePrompt("Please fix my code.", "Fix my code.", typeRules="Code prompt: never change code.")
+    assert "- Code prompt: never change code." in messages.lastRequest["messages"][0]["content"]
+
 #A well-formed reply is parsed into score, passed and reason, with no trace
 def test_parseValidatorReply_well_formed():
     reply = "SCORE: 8.5\nPASSED: Yes\nREASON: Only filler was removed."
@@ -107,3 +121,19 @@ def test_validatePrompt_uses_llm_verdict(fakeClient):
     assert result.passed is False
     assert result.reasoning == "Lost the 100-word limit."
     assert result.reactTrace == "THINK: word limit dropped."
+
+#A prompt type can ask for a higher score than the LLM's own pass mark of 6
+def test_validatePrompt_applies_pass_score(fakeClient):
+    fakeClient("THINK: minor loss.\nSCORE: 7\nPASSED: Yes\nREASON: Mostly preserved.")
+    assert validator.validatePrompt("Please fix this code.", "Fix code.").passed is True
+
+    strict = validator.validatePrompt("Please fix this code.", "Fix code.", passScore=8) #above any type's bar today, still applied
+    assert strict.passed is False
+    assert strict.qualityScore == 7.0
+    assert strict.reasoning.startswith("Mostly preserved.")
+    assert "below the 8" in strict.reasoning
+
+#The pass score never turns the LLM's "no" into a pass
+def test_validatePrompt_pass_score_never_overrides_fail(fakeClient):
+    fakeClient("SCORE: 9\nPASSED: No\nREASON: Dropped the code block.")
+    assert validator.validatePrompt("Fix this.", "Fix.", passScore=6).passed is False

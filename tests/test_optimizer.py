@@ -133,6 +133,7 @@ def test_callOptimizerLLM_sends_system_prompt_and_strips(fakeClient):
     }]
     assert messages.lastRequest["tools"] is optimizer.OPTIMIZER_TOOLS
     assert messages.lastRequest["cache_control"] == {"type": "ephemeral"}
+    assert messages.lastRequest["output_config"] == {"effort": optimizer.OPTIMIZER_EFFORT}
     assert messages.lastRequest["model"] == optimizer.OPTIMIZER_MODEL
     userContent = messages.lastRequest["messages"][0]["content"]
     assert "- Filler words" in userContent
@@ -391,3 +392,14 @@ def test_callOptimizerLLM_answers_parallel_calls_together(fakeClient):
     ])
     optimizer.callOptimizerLLM("Please write a poem.", [])
     assert [r["tool_use_id"] for r in toolResults(messages, 1)] == ["toolu_1", "toolu_2"]
+
+#Type rules are listed after the issues and before the prompt, one bullet per type
+def test_buildUserMessage_with_type_rules():
+    message = optimizer.buildUserMessage("Please fix my code.", ["Filler words"],
+                                         typeRules="Code prompt: never change code.\nSecurity prompt: keep every rule.")
+    assert "Rules for this kind of prompt:\n- Code prompt: never change code.\n- Security prompt: keep every rule." in message
+    assert message.index("- Filler words") < message.index("Rules for this kind") < message.index("PROMPT TO OPTIMIZE")
+
+#Without type rules, no section is added
+def test_buildUserMessage_without_type_rules():
+    assert "Rules for this kind" not in optimizer.buildUserMessage("Write a poem.", [])

@@ -7,6 +7,7 @@ import spacy
 import textstat
 from anthropic import Anthropic, APIError
 from agents.tokens import countTokens, DEFAULT_TARGET
+from agents.prompt_types import CHECK_TOKEN_RATIO, CHECK_READABILITY, CHECK_ADVERBS
 
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=20.0)
 logger = logging.getLogger(__name__)
@@ -92,13 +93,15 @@ def countOptionWords(text: str) -> int:
 *    request optional ("Maybe add tests") aren't counted, since cutting them changes the request.
 * 3. Excessive blank lines/whitespace are detected.
 * 4. Readability (textstat) and grammar-based (spaCy) checks are added on.
-* 5. A list of human-readable issue descriptions is returned (empty if none found).
+* 5. Checks named in skipChecks (prompt_types.py) are left out, since they misfire on that kind of
+*    prompt (the token ratio on code, readability on code and research).
+* 6. A list of human-readable issue descriptions is returned (empty if none found).
 """
-def runRuleCheck(text: str, token_count: int) -> list[str]:
+def runRuleCheck(text: str, token_count: int, skipChecks: frozenset[str] = frozenset()) -> list[str]:
     issues = []
     word_count = len(text.split())
-    
-    if word_count > 0 and (token_count / word_count) > 1.6: #chose 1.6 becayse its abit above the token to word ration(1.3). !!! <-- gather data on it
+
+    if CHECK_TOKEN_RATIO not in skipChecks and word_count > 0 and (token_count / word_count) > 1.6: #chose 1.6 becayse its abit above the token to word ration(1.3). !!! <-- gather data on it
         issues.append("High token to word ratio. Perhaps too verbose?")
     
     filler_hits = len(FILLER_RE.findall(text)) - countOptionWords(text)
@@ -108,8 +111,9 @@ def runRuleCheck(text: str, token_count: int) -> list[str]:
     if "\n\n\n" in text:
         issues.append("Unnecessary blank lines and or whitespace added")
 
-    issues.extend(runReadabilityCheck(text))
-    issues.extend(runSpacyCheck(text))
+    if CHECK_READABILITY not in skipChecks:
+        issues.extend(runReadabilityCheck(text))
+    issues.extend(runSpacyCheck(text, checkAdverbs=CHECK_ADVERBS not in skipChecks))
 
     return issues
 
@@ -170,11 +174,11 @@ def loadNlp():
 * @post
 * 1. If the spaCy model isn't available or the text is empty, an empty list is returned.
 * 2. The share of adverbs among words is flagged above MAX_ADVERB_RATIO
-*    (only for prompts of at least MIN_WORDS_FOR_ADVERBS words).
+*    (only for prompts of at least MIN_WORDS_FOR_ADVERBS words, and only if checkAdverbs is True).
 * 3. Sentences that repeat an earlier sentence are counted and flagged.
 * 4. A list of issue descriptions is returned (empty if none found).
 """
-def runSpacyCheck(text: str) -> list[str]:
+def runSpacyCheck(text: str, checkAdverbs: bool = True) -> list[str]:
     nlp = loadNlp()
     if nlp is None or not text.strip():
         return []
@@ -184,7 +188,7 @@ def runSpacyCheck(text: str) -> list[str]:
 
     words = [token for token in doc if token.is_alpha]
     adverbs = [token for token in words if token.pos_ == "ADV"]
-    if len(words) >= MIN_WORDS_FOR_ADVERBS and len(adverbs) / len(words) > MAX_ADVERB_RATIO:
+    if checkAdverbs and len(words) >= MIN_WORDS_FOR_ADVERBS and len(adverbs) / len(words) > MAX_ADVERB_RATIO:
         issues.append(f"Lots of adverbs ({len(adverbs)} of {len(words)} words), most can be cut without changing the meaning")
 
     repeats = countRepeatedSentences(doc)
@@ -267,15 +271,16 @@ def determineSeverity(token_count: int, issue_count: int) -> str:
 * @brief Executes the full audit process on a single user-submitted prompt.
 * @post
 * 1. The prompt's token count (as the target LLM tokenizes it) and estimated cost are calculated.
-* 2. Fast rule-based checks are run against the prompt.
+* 2. Fast rule-based checks are run against the prompt, minus the ones in skipChecks (the prompt type's
+*    profile, see prompt_types.py).
 * 3. If the prompt is long and no rule-based issues were found, an LLM review is triggered and its findings are appended.
 * 4. A severity rating is computed from the final issue count and token count.
 * 5. A populated AuditResult object is returned, containing all of the above.
 """
-def auditPrompt(prompt: str, target: str = DEFAULT_TARGET) -> AuditResult:
+def auditPrompt(prompt: str, target: str = DEFAULT_TARGET, skipChecks: frozenset[str] = frozenset()) -> AuditResult:
     token_count = countTokens(prompt, target)
     cost = estimateCost(token_count)
-    issues = runRuleCheck(prompt, token_count)
+    issues = runRuleCheck(prompt, token_count, skipChecks)
 
     if token_count > 500 and not issues:
         issues.extend(llmReview(prompt))

@@ -5,6 +5,7 @@ import re
 import pytest
 from agents import auditor
 from agents.auditor import runRuleCheck, countTokens, AuditResult
+from agents.prompt_types import CHECK_TOKEN_RATIO, CHECK_READABILITY, CHECK_ADVERBS
 
 #Token counting returns a positive count for text and zero for empty input
 def test_countTokens_counts_nonempty_text():
@@ -97,3 +98,25 @@ def test_runRuleCheck_option_words_are_not_filler():
     assert not any("filler" in issue.lower() for issue in auditor.runRuleCheck(options, auditor.countTokens(options)))
     hedging = "I was just wondering if you could maybe possibly help me write the parser, please."
     assert any("filler" in issue.lower() for issue in auditor.runRuleCheck(hedging, auditor.countTokens(hedging)))
+
+#Checks a prompt type skips aren't run (code skips the token ratio, readability and adverbs)
+def test_runRuleCheck_skips_checks(monkeypatch):
+    calls = {}
+    def fakeReadability(text):
+        calls["readability"] = True
+        return ["readability issue"]
+    def fakeSpacy(text, checkAdverbs=True):
+        calls["adverbs"] = checkAdverbs
+        return []
+    monkeypatch.setattr(auditor, "runReadabilityCheck", fakeReadability)
+    monkeypatch.setattr(auditor, "runSpacyCheck", fakeSpacy)
+
+    #"x" at 5 tokens per word trips the ratio check
+    everything = runRuleCheck("x", token_count=5)
+    assert any("token to word" in issue for issue in everything)
+    assert "readability issue" in everything and calls["adverbs"] is True
+
+    calls.clear()
+    skipped = runRuleCheck("x", 5, frozenset({CHECK_TOKEN_RATIO, CHECK_READABILITY, CHECK_ADVERBS}))
+    assert skipped == []
+    assert "readability" not in calls and calls["adverbs"] is False

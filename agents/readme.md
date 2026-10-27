@@ -114,7 +114,7 @@ The Optimizer used to make one structured-output call. Its rewrite was only chec
 Design decisions:
 
 - **Manual loop, not the SDK's tool runner:** the loop has to end on a submit call rather than on `end_turn`, and it needs a hard cap. A manual loop does both and is easy to fake in tests.
-- **`MAX_TOOL_TURNS = 6` API calls per run.** If no submission is accepted in time, the original prompt is kept. With `MAX_OPTIMIZATION_ATTEMPTS = 3` in the orchestrator, one prompt can now cost up to 18 Optimizer calls (it used to be 3), so watch the logged turn counts.
+- **`MAX_TOOL_TURNS = 6` API calls per run.** If no submission is accepted in time, the original prompt is kept. With `MAX_OPTIMIZATION_ATTEMPTS = 2` in the orchestrator, one prompt can cost up to 12 Optimizer calls, so watch the logged turn counts. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
 - **No forced `tool_choice`:** Sonnet 5.5 returns a 400 for it. The system prompt says to always finish with `submit_rewrite`, and a turn with no tool call gets one reminder.
 - **Every tool is `strict: true`**, so tool inputs always match their schema. `submit_rewrite`'s schema is generated from `Rewrite`, so the two can't drift apart.
 - **Caching:** the system prompt keeps its breakpoint, and top-level `cache_control` caches the growing conversation, so each turn pays full price only for what's new.
@@ -378,7 +378,7 @@ The steps:
 2. Agent 2 rewrites the prompt using Agent 1's issues.
 3. If the rewrite saves no tokens (unchanged or longer), the loop stops and the original is returned.
 4. Agent 3 checks the rewrite against the original. If it passes, the rewrite is returned and the loop stops.
-5. If it fails, the rewrite and Agent 3's reason are stored as a `RejectedAttempt` and Agent 2 tries again with every rejected attempt so far, up to `MAX_OPTIMIZATION_ATTEMPTS` (3) attempts in total.
+5. If it fails, the rewrite and Agent 3's reason are stored as a `RejectedAttempt` and Agent 2 tries again with every rejected attempt so far, up to `MAX_OPTIMIZATION_ATTEMPTS` (2) attempts in total. The Optimizer's tool loop already fixes local-check failures, so these attempts only retry Validator rejections.
 6. If no attempt passes, the original prompt is returned.
 
 ### To test: pytest tests/test_orchestrator.py -v

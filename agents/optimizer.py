@@ -19,7 +19,11 @@ OPTIMIZER_MODEL = "claude-sonnet-5-5"
 #Most API calls in one optimizer run: draft, check, fix, check, submit, plus one spare.
 #Every call resends the conversation, so this also caps what one rewrite can cost
 MAX_TOOL_TURNS = 6
- 
+#Sonnet 5.5 defaults to "high", which thinks longer than a few-sentence rewrite needs, and the user is waiting
+#before hitting enter. "low" is safe here: submit_rewrite refuses anything findRewriteProblems rejects at any
+#effort, and the Validator still checks meaning. Step up to "medium" if live runs show worse rewrites
+OPTIMIZER_EFFORT = "low"
+
  
 @dataclass
 class OptimizationResult:
@@ -231,17 +235,25 @@ In the examples below, each output is what you'd pass to submit_rewrite.
 * 2. If must-preserve items were provided (tasks, rules and numbers found
 *    by the local checks), they're listed, since a rewrite that drops one
 *    is rejected without a Validator call.
-* 3. If earlier rewrites were rejected, each one is shown in tags with
+* 3. If type rules were provided (what this kind of prompt allows cutting, from
+*    prompt_types.py), they're listed. They go in the message, not the system
+*    prompt, so the cached system prompt stays identical on every call.
+* 4. If earlier rewrites were rejected, each one is shown in tags with
 *    the Validator's reason, so the LLM sees exactly what it broke.
-* 4. The original prompt comes last, so it's what the LLM rewrites.
-* 5. A single combined string is returned.
+* 5. The original prompt comes last, so it's what the LLM rewrites.
+* 6. A single combined string is returned.
 """
 def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[RejectedAttempt] = None,
-                     mustPreserve: list[str] = None) -> str:
+                     mustPreserve: list[str] = None, typeRules: str = "") -> str:
     issuesSection = ""
     if issues:
         issuesList = "\n".join(f"- {issue}" for issue in issues)
         issuesSection = f"Known issues found in prompt:\n{issuesList}\n\n"
+
+    typeSection = ""
+    if typeRules:
+        typeRulesList = "\n".join(f"- {rule}" for rule in typeRules.splitlines() if rule.strip())
+        typeSection = f"Rules for this kind of prompt:\n{typeRulesList}\n\n"
 
     preserveSection = ""
     if mustPreserve:
@@ -262,6 +274,7 @@ def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[Reje
  
     return (
             f"{issuesSection}"
+            f"{typeSection}"
             f"{preserveSection}"
             f"{rejectedSection}"
             f"PROMPT TO OPTIMIZE:\n{prompt}"
@@ -328,7 +341,7 @@ def runTool(name: str, toolInput: dict, prompt: str, target: str) -> tuple[str, 
 * submits one that passes the local checks.
 * @post
 * 1. Each turn sends the conversation so far with the cached system prompt and
-*    the three tools; the conversation itself is cached too, so a turn only pays
+*    the three tools, at OPTIMIZER_EFFORT; the conversation itself is cached too, so a turn only pays
 *    full price for what's new. Cache reads and writes are logged.
 * 2. Every tool call in a turn is run and all results go back in one message.
 * 3. The first accepted submit_rewrite ends the loop and its Rewrite is returned,
@@ -342,10 +355,11 @@ def runTool(name: str, toolInput: dict, prompt: str, target: str) -> tuple[str, 
 def callOptimizerLLM(prompt: str, issues: list[str],
                      rejectedAttempts: list[RejectedAttempt] = None,
                      mustPreserve: list[str] = None,
-                     target: str = DEFAULT_TARGET) -> Rewrite | None:
+                     target: str = DEFAULT_TARGET,
+                     typeRules: str = "") -> Rewrite | None:
     messages = [{
         "role": "user",
-        "content": buildUserMessage(prompt, issues, rejectedAttempts, mustPreserve)
+        "content": buildUserMessage(prompt, issues, rejectedAttempts, mustPreserve, typeRules)
     }]
     for turn in range(1, MAX_TOOL_TURNS + 1):
         response = client.messages.create(
@@ -358,6 +372,7 @@ def callOptimizerLLM(prompt: str, issues: list[str],
                 "cache_control": {"type": "ephemeral"},
             }],
             tools=OPTIMIZER_TOOLS,
+            output_config={"effort": OPTIMIZER_EFFORT},
             cache_control={"type": "ephemeral"},
             messages=messages,
         )
@@ -394,8 +409,9 @@ def callOptimizerLLM(prompt: str, issues: list[str],
 * 1. The original prompt's token count is calculated with the target
 *    LLM's tokenizer, so savings match what the user is actually billed.
 * 2. The prompt is sent to the optimizer LLM, along with any known
-*    issues from Agent 1, what the prompt must keep, and any earlier
-*    rewrites the Validator rejected, and a structured Rewrite is returned.
+*    issues from Agent 1, the rules for its prompt type, what the prompt must
+*    keep, and any earlier rewrites the Validator rejected, and a structured
+*    Rewrite is returned.
 * 3. If the LLM marked the prompt unchanged, returned an empty rewrite,
 *    or gave no usable reply, the original prompt is kept (zero savings).
 * 4. The optimized prompt's token count is calculated.
@@ -405,11 +421,11 @@ def callOptimizerLLM(prompt: str, issues: list[str],
 """
 def optimizePrompt(prompt: str, issues: list[str] = None, target: str = DEFAULT_TARGET,
                    rejectedAttempts: list[RejectedAttempt] = None,
-                   mustPreserve: list[str] = None) -> OptimizationResult:
+                   mustPreserve: list[str] = None, typeRules: str = "") -> OptimizationResult:
     issues = issues or []
     originalTokens = countTokens(prompt, target)
- 
-    rewrite = callOptimizerLLM(prompt, issues, rejectedAttempts, mustPreserve, target)
+
+    rewrite = callOptimizerLLM(prompt, issues, rejectedAttempts, mustPreserve, target, typeRules)
     if rewrite is None or rewrite.unchanged or not rewrite.optimizedPrompt:
         optimizedPrompt, changes = prompt, []
     else:

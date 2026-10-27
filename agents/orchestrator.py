@@ -11,13 +11,17 @@ from agents.validator import validatePrompt, ValidationResult
 from agents.locks import extractLocks
 from agents.intent import detectIntent, describeIntent
 from agents.vagueness import findVagueness, findOptionalMarkers, VaguenessReport
+from agents.prompt_types import detectPromptTypes, combineProfiles, DEFAULT_TYPE
 from agents.tokens import DEFAULT_TARGET
 
 from agents.hooks.orchestrator import OrchestrationHooks
 
 logger = logging.getLogger(__name__)
 
-MAX_OPTIMIZATION_ATTEMPTS = 3 #Is three too little? too much? idk come back to it
+#The Optimizer already fixes local-check failures inside its own tool loop, so these attempts only retry
+#Validator rejections. Each one is up to MAX_TOOL_TURNS Optimizer calls plus a Validator call, all while the
+#user waits, so 2 (one retry). Tune on real runs
+MAX_OPTIMIZATION_ATTEMPTS = 2
 #Lock kinds listed for the Optimizer up front. Code, URLs and steps are left out: the system prompt
 #already says to copy them exactly, and repeating a long code block would cost more than it saves
 PRESERVE_LOCK_KINDS = ("constraint", "number")
@@ -35,6 +39,9 @@ class OrchestrationResult:
     #How vague the original is, with clarifying questions for the extension to ask. The Optimizer never
     #fills these gaps itself, since any guess changes the request
     vagueness: VaguenessReport = field(default_factory=VaguenessReport)
+    #Every type the prompt was detected as, strictest first (prompt_types.py). Their combined profile
+    #decided which audit checks ran, the Optimizer's type rules and the Validator's pass score
+    promptTypes: list[str] = field(default_factory=lambda: [DEFAULT_TYPE])
     #Set when an Optimizer or Validator API call failed and the original was returned because of it,
     #so a fallback from an outage can be told apart from "no rewrite passed"
     error: str | None = None
@@ -67,10 +74,14 @@ def buildMustPreserve(prompt: str) -> list[str]:
 * LLM the user is prompting ("chatgpt" or "claude").
 
 * @post
+* 0. The prompt's types are detected first (prompt_types.py) and their profiles combined, strictest
+*    setting winning. The profile is passed on: skipChecks to the Auditor, optimizerRules to the
+*    Optimizer and the Validator (so both work from the same rules), passScore to the Validator.
+*    A type with optimize=False skips optimization.
 * 1. The Auditor runs first; if it finds no issues, optimization is
 *    skipped entirely and the original prompt is returned unchanged.
 * 2. the Optimizer produces a rewrite using the Auditor's
-*    issues and the list of what this prompt must keep (buildMustPreserve),
+*    issues, the type's rules and the list of what this prompt must keep (buildMustPreserve),
 *    plus, on retries, every earlier rewrite the Validator rejected along with its reason.
 *    It drafts, checks and revises with tools on its own (see optimizer.py), and only
 *    returns a rewrite that passes the local checks below.
@@ -78,7 +89,7 @@ def buildMustPreserve(prompt: str) -> list[str]:
 *    options), as a safety net. If anything is broken,
 *    the attempt fails without a Validator call and those reasons are
 *    passed back to the Optimizer. Otherwise the Validator checks the rewrite
-*    against the original prompt.
+*    against the original prompt, with the type's rules and pass score.
 * 4. If it passes, that rewrite becomes the final prompt and the loop
 *    stops immediately NO wasted extra calls.
 * 5. If it fails, the Optimizer is retried (up to
@@ -103,19 +114,23 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
     # we do this so if we want to run it without hooks, we can!
     hook = hook or OrchestrationHooks()
 
+    promptTypes = detectPromptTypes(prompt)
+    profile = combineProfiles(promptTypes)
+
     hook.updateStage("auditing")
-    auditResult = auditPrompt(prompt, target)
+    auditResult = auditPrompt(prompt, target, skipChecks=profile.skipChecks)
     hook.saveAudit(auditResult)
 
     vagueness = findVagueness(prompt)
- 
-    if not auditResult.issues:
+
+    if not auditResult.issues or not profile.optimize:
         orchestrationResult = OrchestrationResult(
             originalPrompt=prompt,
             finalPrompt=prompt,
             wasOptimized=False,
             auditResult=auditResult,
             vagueness=vagueness,
+            promptTypes=promptTypes,
         )
         hook.finishJob(orchestrationResult)
         return orchestrationResult
@@ -130,7 +145,8 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         try:
             optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
                                                 rejectedAttempts=list(rejectedAttempts),
-                                                mustPreserve=mustPreserve)
+                                                mustPreserve=mustPreserve,
+                                                typeRules=profile.optimizerRules)
         except APIError as apiError:
             error = f"Optimizer call failed: {apiError}"
             logger.warning("%s, returning the original prompt", error)
@@ -165,7 +181,9 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
 
         #An unvalidated rewrite is never sent, so a failed Validator call falls back to the original
         try:
-            validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
+            validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt,
+                                              passScore=profile.passScore,
+                                              typeRules=profile.optimizerRules)
         except APIError as apiError:
             error = f"Validator call failed: {apiError}"
             logger.warning("%s, returning the original prompt", error)
@@ -185,6 +203,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
                 percentSaved=optimizationResult.percentSaved,
                 changes=optimizationResult.changes,
                 vagueness=vagueness,
+                promptTypes=promptTypes,
             )
             hook.finishJob(orchestrationResult)
 
@@ -203,6 +222,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         auditResult=auditResult,
         attempts=attempts,
         vagueness=vagueness,
+        promptTypes=promptTypes,
         error=error,
     )
     hook.finishJob(orchestrationResult)
@@ -218,6 +238,8 @@ if __name__ == "__main__":
     print("Final:", result.finalPrompt)
     print()
     print("Optimized:", result.wasOptimized)
+    print()
+    print("Prompt types:", result.promptTypes)
     print()
     print("Audit severity:", result.auditResult.severity)
     print()
