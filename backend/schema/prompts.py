@@ -15,3 +15,7 @@ class PromptCreate(BaseModel):
 
 class PromptInsert(PromptCreate):
     user_id: str
+
+
+class GuestPromptCreate(BaseModel):
+    txt_prompt: str = Field(min_length=1)
