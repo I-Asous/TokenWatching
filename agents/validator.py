@@ -2,7 +2,8 @@ import os
 from dataclasses import dataclass
 from anthropic import Anthropic
  
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+#A hung call raises APITimeoutError, which the orchestrator catches
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=10.0)
  
  
 @dataclass

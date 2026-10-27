@@ -2,6 +2,12 @@
 Offline unit tests for the orchestrator
 """
 import pytest
+#anthropic 1.x is built on httpx2 and 0.x on httpx; build the fake request with whichever the SDK uses
+try:
+    import httpx2 as httpx
+except ImportError:
+    import httpx
+from anthropic import APIConnectionError
 from agents import orchestrator
 from agents.auditor import AuditResult
 from agents.optimizer import OptimizationResult, RejectedAttempt
@@ -161,6 +167,44 @@ def test_runPipeline_all_attempts_fail_returns_original(fakeAgents):
     assert result.wasOptimized is False
     assert result.tokensSaved == 0
     assert result.percentSaved == 0.0
+
+#A failed Validator call returns the original prompt and isn't fed back to the Optimizer as a rejection
+def test_runPipeline_validator_api_error_returns_original(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)] * 2)
+    def fail(originalPrompt, optimizedPrompt):
+        raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    monkeypatch.setattr(orchestrator, "validatePrompt", fail)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert len(fake.optimizerCalls) == 1
+    assert result.finalPrompt == PROMPT
+    assert result.wasOptimized is False
+    assert result.attempts == []
+    assert result.tokensSaved == 0
+    assert result.error.startswith("Validator call failed")
+
+#A failed Optimizer call returns the original prompt, records the error and doesn't call the Validator
+def test_runPipeline_optimizer_api_error_returns_original(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"])
+    def fail(prompt, issues, target, rejectedAttempts=None, mustPreserve=None):
+        raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    monkeypatch.setattr(orchestrator, "optimizePrompt", fail)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.validatorCalls == []
+    assert result.finalPrompt == PROMPT
+    assert result.wasOptimized is False
+    assert result.error.startswith("Optimizer call failed")
+
+#A run without API failures has no error, even when every rewrite is rejected
+def test_runPipeline_rejections_are_not_errors(fakeAgents):
+    attempts = orchestrator.MAX_OPTIMIZATION_ATTEMPTS
+    fakeAgents(
+        issues=["filler"],
+        rewrites=[("Write a story.", 15)] * attempts,
+        verdicts=[(False, "Dropped the dragon.")] * attempts,
+    )
+    assert orchestrator.runPipeline(PROMPT).error is None
 
 #The retry limit comes from MAX_OPTIMIZATION_ATTEMPTS
 def test_runPipeline_respects_max_attempts(fakeAgents, monkeypatch):

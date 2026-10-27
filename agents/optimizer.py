@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 from agents.auditor import estimateCost
 from agents.tokens import countTokens, DEFAULT_TARGET
  
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+#A rewrite is short, so a minute is plenty; a hung call raises APITimeoutError, which the orchestrator catches
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=20.0)
 logger = logging.getLogger(__name__)
 
 #Sonnet 4.6 doesn't support structured outputs PLUS Sonnet 5.5 does and is mas cheaper
@@ -221,7 +222,8 @@ def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[Reje
 *    prompt, constrained to the Rewrite schema.
 * 2. Cache reads and writes are logged, to confirm the cache is being hit.
 * 3. If the model refused, was cut off, or returned nothing parseable,
-*    None is returned so the caller keeps the original prompt.
+*    None is returned so the caller keeps the original prompt. API errors
+*    are raised, so the orchestrator can record them.
 * 4. Otherwise the validated Rewrite is returned, with the prompt
 *    stripped of whitespace.
 """

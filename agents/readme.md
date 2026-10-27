@@ -549,16 +549,7 @@ Updated 10/4/2026. Done since the last version of this list:
 - ~~Check the rewrite for a preamble before validating it~~ → no longer needed; the Optimizer's structured output puts the rewrite in its own field.
 - ~~Create the pricing config~~ → `config/prices.yaml` exists. Reading it is still open (step 7).
 
-**1. Handle errors in the orchestrator.** Return the original prompt if an agent raises:
-
-```python
-try:
-    optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
-                                        rejectedAttempts=list(rejectedAttempts))
-    validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
-except anthropic.APIError:
-    break  # falls through to returning the original
-```
+**1. ~~Handle errors in the orchestrator.~~** Done (10/27/2026): `runPipeline()` catches `APIError` from the Optimizer and the Validator (timeouts included: 60s and 30s clients), stops, and returns the original prompt. The error is never fed back to the Optimizer as a rejection reason. It goes on `OrchestrationResult.error`, and the backend saves it to the run's `error_stage` / `error_message` while the run's status stays `done`.
 
 **2. Move Agent 3 to structured output, like Agent 2.** This fixes three things at once: a cut-off reply no longer looks like a bad rewrite, a parse failure is no longer fed back to Agent 2 as a rejection reason, and `passed` can be computed from the score instead of trusted from the model:
 

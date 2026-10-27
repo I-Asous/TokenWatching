@@ -4,6 +4,12 @@ Offline unit tests for second agent
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
+#anthropic 1.x is built on httpx2 and 0.x on httpx; build the fake request with whichever the SDK uses
+try:
+    import httpx2 as httpx
+except ImportError:
+    import httpx
+from anthropic import APIConnectionError
 from agents import optimizer
 from agents.optimizer import OptimizationResult, Rewrite, RejectedAttempt
 
@@ -140,6 +146,14 @@ def test_optimizePrompt_unusable_reply_keeps_original(fakeClient, reply, stopRea
     assert result.optimizedPrompt == "Please write a poem."
     assert result.tokensSaved == 0
     assert result.changes == []
+
+#A failed API call is raised, not hidden as "unchanged", so the orchestrator can record it
+def test_optimizePrompt_api_error_is_raised(monkeypatch):
+    def fail(**kwargs):
+        raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    monkeypatch.setattr(optimizer, "client", SimpleNamespace(messages=SimpleNamespace(parse=fail)))
+    with pytest.raises(APIConnectionError):
+        optimizer.optimizePrompt("Please write a poem.")
 
 #An empty rewrite is never returned as the optimized prompt
 def test_optimizePrompt_empty_rewrite_keeps_original(fakeClient):

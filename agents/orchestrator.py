@@ -1,7 +1,10 @@
 import json
 import os
+import logging
 from dataclasses import dataclass, field
  
+from anthropic import APIError
+
 from agents.auditor import auditPrompt, AuditResult
 from agents.optimizer import optimizePrompt, OptimizationResult, RejectedAttempt
 from agents.validator import validatePrompt, ValidationResult
@@ -11,6 +14,8 @@ from agents.vagueness import findVagueness, findOptionalMarkers, findDroppedOpti
 from agents.tokens import DEFAULT_TARGET
 
 from agents.hooks.orchestrator import OrchestrationHooks
+
+logger = logging.getLogger(__name__)
 
 MAX_OPTIMIZATION_ATTEMPTS = 3 #Is three too little? too much? idk come back to it
 #Lock kinds listed for the Optimizer up front. Code, URLs and steps are left out: the system prompt
@@ -30,6 +35,9 @@ class OrchestrationResult:
     #How vague the original is, with clarifying questions for the extension to ask. The Optimizer never
     #fills these gaps itself, since any guess changes the request
     vagueness: VaguenessReport = field(default_factory=VaguenessReport)
+    #Set when an Optimizer or Validator API call failed and the original was returned because of it,
+    #so a fallback from an outage can be told apart from "no rewrite passed"
+    error: str | None = None
 
 """
 * @brief Lists what a rewrite of this prompt must keep, for the Optimizer's message.
@@ -81,7 +89,9 @@ def buildMustPreserve(prompt: str) -> list[str]:
 * 6. If a rewrite saves no tokens, the loop stops without validating it.
 * 7. If no attempt passes, the original prompt is returned unchanged,
 *    a rewrite the Validator rejected is never sent, even if it would
-*    have saved tokens.
+*    have saved tokens. The same goes for a failed Optimizer or Validator API call
+*    (including a timeout): the loop stops, the error is recorded on the result's
+*    error field, and it is never fed back to the Optimizer (it says nothing about the rewrite).
 * 8. The original's vagueness report (vagueness.py) is attached to every result, including when
 *    optimization is skipped, so the extension can ask its clarifying questions.
 * 9. An OrchestrationResult capturing every attempt, the audit findings,
@@ -113,12 +123,18 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
     attempts: list[ValidationResult] = []
     rejectedAttempts: list[RejectedAttempt] = []
     mustPreserve = buildMustPreserve(prompt)
+    error = None
  
     for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
         hook.updateStage("optimizing")
-        optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
-                                            rejectedAttempts=list(rejectedAttempts),
-                                            mustPreserve=mustPreserve)
+        try:
+            optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
+                                                rejectedAttempts=list(rejectedAttempts),
+                                                mustPreserve=mustPreserve)
+        except APIError as apiError:
+            error = f"Optimizer call failed: {apiError}"
+            logger.warning("%s, returning the original prompt", error)
+            break
         hook.saveOptimization(optimizationResult)
 
         #A rewrite that saves nothing (unchanged or longer) isn't worth a Validator call or a retry
@@ -148,7 +164,13 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
             hook.saveValidation(brokenLockValidation)
             continue
 
-        validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
+        #An unvalidated rewrite is never sent, so a failed Validator call falls back to the original
+        try:
+            validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt)
+        except APIError as apiError:
+            error = f"Validator call failed: {apiError}"
+            logger.warning("%s, returning the original prompt", error)
+            break
         hook.saveValidation(validationResult)
 
         attempts.append(validationResult)
@@ -174,7 +196,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         rejectedAttempts.append(
             RejectedAttempt(optimizationResult.optimizedPrompt, validationResult.reasoning)
         )
-    #No attempt passed validation within the retry amount SO fail gets closed.
+    #No attempt passed validation within the retry amount (or an API call failed) SO fail gets closed.
     orchestrationResult = OrchestrationResult(
         originalPrompt=prompt,
         finalPrompt=prompt,
@@ -182,6 +204,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         auditResult=auditResult,
         attempts=attempts,
         vagueness=vagueness,
+        error=error,
     )
     hook.finishJob(orchestrationResult)
     return orchestrationResult
