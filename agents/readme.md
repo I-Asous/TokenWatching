@@ -101,7 +101,24 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 
 ## Agent 2 — Optimizer (`optimizer.py`)
 
-### Status: Reworked around structured outputs and worked examples, hardened against edge cases (10/4/2026)
+### Status: Now a tool-using agent: drafts, checks and revises its own rewrite before submitting it (10/27/2026). Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
+
+### Tool loop (10/27/2026)
+
+The Optimizer used to make one structured-output call. Its rewrite was only checked afterwards, in the orchestrator, and a failure cost a whole retry. Now `callOptimizerLLM()` runs a manual tool-use loop with three tools:
+
+- `count_tokens(text)` counts tokens with the target's tokenizer (`tokens.py`)
+- `check_rewrite(rewrite)` runs `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`) and returns every problem plus both token counts
+- `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop. A changed rewrite is checked first, and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again
+
+Design decisions:
+
+- **Manual loop, not the SDK's tool runner:** the loop has to end on a submit call rather than on `end_turn`, and it needs a hard cap. A manual loop does both and is easy to fake in tests.
+- **`MAX_TOOL_TURNS = 6` API calls per run.** If no submission is accepted in time, the original prompt is kept. With `MAX_OPTIMIZATION_ATTEMPTS = 3` in the orchestrator, one prompt can now cost up to 18 Optimizer calls (it used to be 3), so watch the logged turn counts.
+- **No forced `tool_choice`:** Sonnet 5.5 returns a 400 for it. The system prompt says to always finish with `submit_rewrite`, and a turn with no tool call gets one reminder.
+- **Every tool is `strict: true`**, so tool inputs always match their schema. `submit_rewrite`'s schema is generated from `Rewrite`, so the two can't drift apart.
+- **Caching:** the system prompt keeps its breakpoint, and top-level `cache_control` caches the growing conversation, so each turn pays full price only for what's new.
+- **The orchestrator still runs `findRewriteProblems()`** as a safety net, and still retries when the Validator rejects a rewrite.
 
 ### What it does
 
@@ -113,7 +130,7 @@ Takes a prompt, plus optionally the issues Agent 1 flagged, the target LLM, and 
 - `changes`: the LLM's short list of edits (e.g. "removed politeness phrasing")
 - `preservedConstraints`: the requirements the LLM said the rewrite had to keep
 
-If the LLM marks the prompt as already concise, refuses, is cut off, or returns nothing usable, the original prompt is kept and the savings are 0.
+If the LLM marks the prompt as already concise, refuses, is cut off, or gets no submission accepted within `MAX_TOOL_TURNS`, the original prompt is kept and the savings are 0. API errors are raised for the orchestrator to record.
 
 ### To test: pytest tests/test_optimizer.py -v
 

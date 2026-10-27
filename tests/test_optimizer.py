@@ -24,28 +24,59 @@ def makeRewrite(prompt, unchanged=False, changes=None, constraints=None):
     )
 
 
-#Fake Anthropic client that records the request and returns a canned parsed reply
+#A tool call block, as the optimizer LLM would send it
+def toolUse(name, toolInput, blockId="toolu_1"):
+    return SimpleNamespace(type="tool_use", id=blockId, name=name, input=toolInput)
+
+#One turn that only submits this rewrite
+def submitTurn(rewrite, blockId="toolu_1"):
+    return [toolUse(optimizer.SUBMIT_TOOL, rewrite.model_dump(), blockId)]
+
+#One turn with text and no tool call
+TEXT_TURN = [SimpleNamespace(type="text", text="Here is my rewrite.")]
+
+
+#Fake Anthropic client that records each request and plays back one scripted turn per call,
+#repeating the last turn once the script runs out
 class FakeMessages:
-    def __init__(self, reply, stopReason):
-        self.reply = reply
+    def __init__(self, turns, stopReason):
+        self.turns = turns
         self.stopReason = stopReason
-        self.lastRequest = None
+        self.requests = []
 
-    def parse(self, **kwargs):
-        self.lastRequest = kwargs
+    @property
+    def lastRequest(self):
+        return self.requests[-1]
+
+    def create(self, **kwargs):
+        self.requests.append(kwargs)
+        content = self.turns[min(len(self.requests), len(self.turns)) - 1]
         usage = SimpleNamespace(cache_read_input_tokens=0, cache_creation_input_tokens=0)
-        return SimpleNamespace(parsed_output=self.reply, stop_reason=self.stopReason, usage=usage)
+        stopReason = self.stopReason or ("tool_use" if any(b.type == "tool_use" for b in content) else "end_turn")
+        return SimpleNamespace(content=content, stop_reason=stopReason, usage=usage)
 
 
+#Installs a fake client. A string or Rewrite reply is submitted on the first turn, None is a
+#reply that never calls a tool, and a list of turns is played back as given
 @pytest.fixture
 def fakeClient(monkeypatch):
-    def install(reply, stopReason="end_turn"):
+    def install(reply, stopReason=None):
         if isinstance(reply, str):
             reply = makeRewrite(reply)
-        fake = SimpleNamespace(messages=FakeMessages(reply, stopReason))
+        if isinstance(reply, Rewrite):
+            turns = [submitTurn(reply)]
+        elif reply is None:
+            turns = [TEXT_TURN]
+        else:
+            turns = reply
+        fake = SimpleNamespace(messages=FakeMessages(turns, stopReason))
         monkeypatch.setattr(optimizer, "client", fake)
         return fake.messages
     return install
+
+#The tool results the optimizer sent back after a given turn (1-based)
+def toolResults(messages, turn):
+    return messages.lastRequest["messages"][turn * 2]["content"]
 
 #Token counting returns a positive count for text and zero for empty input
 def test_countTokens_counts_nonempty_text():
@@ -89,7 +120,7 @@ def test_optimizePrompt_forwards_rejected_attempts(fakeClient):
     assert "Write a story." in userContent
     assert "Dropped the dragon." in userContent
 
-#LLM call uses the optimizer system prompt and schema, and strips whitespace from the rewrite
+#LLM call uses the cached optimizer system prompt and the tools, and strips whitespace from the rewrite
 def test_callOptimizerLLM_sends_system_prompt_and_strips(fakeClient):
     messages = fakeClient("  Write a poem.\n")
     result = optimizer.callOptimizerLLM("Please write a poem.", ["Filler words"])
@@ -100,7 +131,8 @@ def test_callOptimizerLLM_sends_system_prompt_and_strips(fakeClient):
         "text": optimizer.OPTIMIZER_SYSTEM_PROMPT,
         "cache_control": {"type": "ephemeral"},
     }]
-    assert messages.lastRequest["output_format"] is Rewrite
+    assert messages.lastRequest["tools"] is optimizer.OPTIMIZER_TOOLS
+    assert messages.lastRequest["cache_control"] == {"type": "ephemeral"}
     assert messages.lastRequest["model"] == optimizer.OPTIMIZER_MODEL
     userContent = messages.lastRequest["messages"][0]["content"]
     assert "- Filler words" in userContent
@@ -134,9 +166,9 @@ def test_optimizePrompt_unchanged_keeps_original(fakeClient):
     assert result.tokensSaved == 0
     assert result.changes == []
 
-#A refused, truncated or unparseable reply falls back to the original prompt
+#A refused, truncated or never-submitted reply falls back to the original prompt
 @pytest.mark.parametrize("reply, stopReason", [
-    (None, "end_turn"),
+    (None, None),
     (makeRewrite("Write a poem"), "refusal"),
     (makeRewrite("Write a"), "max_tokens"),
 ])
@@ -151,7 +183,7 @@ def test_optimizePrompt_unusable_reply_keeps_original(fakeClient, reply, stopRea
 def test_optimizePrompt_api_error_is_raised(monkeypatch):
     def fail(**kwargs):
         raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
-    monkeypatch.setattr(optimizer, "client", SimpleNamespace(messages=SimpleNamespace(parse=fail)))
+    monkeypatch.setattr(optimizer, "client", SimpleNamespace(messages=SimpleNamespace(create=fail)))
     with pytest.raises(APIConnectionError):
         optimizer.optimizePrompt("Please write a poem.")
 
@@ -269,3 +301,93 @@ def test_optimizePrompt_forwards_must_preserve(fakeClient):
 def test_system_prompt_keeps_options_and_vagueness():
     assert "maybe add tests" in optimizer.OPTIMIZER_SYSTEM_PROMPT
     assert "keep it exactly as vague" in optimizer.OPTIMIZER_SYSTEM_PROMPT
+
+#Every tool is strict, and submit_rewrite takes exactly the Rewrite fields
+def test_tools_are_strict():
+    for tool in optimizer.OPTIMIZER_TOOLS:
+        assert tool["strict"] is True
+        assert tool["input_schema"]["additionalProperties"] is False
+    submit = next(t for t in optimizer.OPTIMIZER_TOOLS if t["name"] == optimizer.SUBMIT_TOOL)
+    assert set(submit["input_schema"]["required"]) == set(Rewrite.model_fields)
+
+#The model can check a draft, see the result, and then submit it
+def test_callOptimizerLLM_check_then_submit(fakeClient):
+    rewrite = "Write a short story about a dragon."
+    messages = fakeClient([
+        [toolUse("check_rewrite", {"rewrite": rewrite})],
+        submitTurn(makeRewrite(rewrite), "toolu_2"),
+    ])
+    result = optimizer.callOptimizerLLM("Please, could you write a short story about a dragon? Thanks!", [])
+
+    assert result.optimizedPrompt == rewrite
+    assert len(messages.requests) == 2
+    [checkResult] = toolResults(messages, 1)
+    assert checkResult["tool_use_id"] == "toolu_1"
+    assert checkResult["is_error"] is False
+    assert checkResult["content"].startswith("No problems found.")
+    assert "Tokens: original" in checkResult["content"]
+
+#check_rewrite lists what a draft dropped
+def test_check_rewrite_reports_problems():
+    report = optimizer.describeCheck("Write a bio in under 300 words.", "Write a bio.", "chatgpt")
+    assert report.startswith("Problems:\n- ")
+    assert "300" in report
+
+#A submission that drops a lock is refused with the reasons, and the fixed one is accepted
+def test_callOptimizerLLM_refuses_broken_submission(fakeClient):
+    original = "Could you please write a bio for our CEO in under 300 words? Thanks!"
+    messages = fakeClient([
+        submitTurn(makeRewrite("Write a bio for our CEO.")),
+        submitTurn(makeRewrite("Write a bio for our CEO in under 300 words."), "toolu_2"),
+    ])
+    result = optimizer.callOptimizerLLM(original, [])
+
+    assert result.optimizedPrompt == "Write a bio for our CEO in under 300 words."
+    [refusal] = toolResults(messages, 1)
+    assert refusal["is_error"] is True
+    assert refusal["content"].startswith("Refused.")
+    assert "300" in refusal["content"]
+
+#A model that never gets a submission through stops after MAX_TOOL_TURNS calls
+def test_callOptimizerLLM_stops_at_turn_cap(fakeClient):
+    original = "Could you please write a bio in under 300 words? Thanks!"
+    messages = fakeClient(makeRewrite("Write a bio."))
+    assert optimizer.callOptimizerLLM(original, []) is None
+    assert len(messages.requests) == optimizer.MAX_TOOL_TURNS
+
+#A turn with no tool call is answered with a reminder to submit
+def test_callOptimizerLLM_reminds_to_submit(fakeClient):
+    messages = fakeClient([TEXT_TURN, submitTurn(makeRewrite("Write a poem."))])
+    result = optimizer.callOptimizerLLM("Please write a poem.", [])
+
+    assert result.optimizedPrompt == "Write a poem."
+    assert optimizer.SUBMIT_TOOL in messages.lastRequest["messages"][2]["content"]
+
+#An unchanged submission isn't checked, since it is the original
+def test_runTool_unchanged_submission_skips_check():
+    rewrite = makeRewrite("Write a bio in under 300 words.", unchanged=True, changes=[])
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), "Write a bio in under 300 words.", "chatgpt")
+    assert (content, isError) == ("Submitted.", False)
+    assert submitted.unchanged is True
+
+#count_tokens counts with the target's tokenizer, and an unknown tool is reported as an error
+def test_runTool_count_tokens_and_unknown_tool():
+    content, isError, _ = optimizer.runTool("count_tokens", {"text": "Hello, world"}, "", "chatgpt")
+    assert content == f"{optimizer.countTokens('Hello, world')} tokens" and isError is False
+    assert optimizer.runTool("delete_everything", {}, "", "chatgpt")[1] is True
+
+#An invalid submission is an error result, not a crash
+def test_runTool_invalid_submission():
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, {"optimizedPrompt": "x"}, "Write x.", "chatgpt")
+    assert isError is True and submitted is None
+    assert content.startswith("Invalid submission")
+
+#Every tool call in one turn gets a result, all in one message
+def test_callOptimizerLLM_answers_parallel_calls_together(fakeClient):
+    messages = fakeClient([
+        [toolUse("count_tokens", {"text": "Write a poem."}, "toolu_1"),
+         toolUse("check_rewrite", {"rewrite": "Write a poem."}, "toolu_2")],
+        submitTurn(makeRewrite("Write a poem."), "toolu_3"),
+    ])
+    optimizer.callOptimizerLLM("Please write a poem.", [])
+    assert [r["tool_use_id"] for r in toolResults(messages, 1)] == ["toolu_1", "toolu_2"]

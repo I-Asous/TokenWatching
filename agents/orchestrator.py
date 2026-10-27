@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from anthropic import APIError
 
 from agents.auditor import auditPrompt, AuditResult
-from agents.optimizer import optimizePrompt, OptimizationResult, RejectedAttempt
+from agents.optimizer import optimizePrompt, findRewriteProblems, OptimizationResult, RejectedAttempt
 from agents.validator import validatePrompt, ValidationResult
-from agents.locks import findBrokenLocks, extractLocks
-from agents.intent import detectIntent, describeIntent, findIntentChanges
-from agents.vagueness import findVagueness, findOptionalMarkers, findDroppedOptions, VaguenessReport
+from agents.locks import extractLocks
+from agents.intent import detectIntent, describeIntent
+from agents.vagueness import findVagueness, findOptionalMarkers, VaguenessReport
 from agents.tokens import DEFAULT_TARGET
 
 from agents.hooks.orchestrator import OrchestrationHooks
@@ -72,10 +72,10 @@ def buildMustPreserve(prompt: str) -> list[str]:
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues and the list of what this prompt must keep (buildMustPreserve),
 *    plus, on retries, every earlier rewrite the Validator rejected along with its reason.
-* 3. The rewrite is first checked locally against the original's locks (code blocks,
-*    inline code, URLs, rules, numbered steps, numbers, see locks.py) and its tasks
-*    (a dropped or changed task, see intent.py) and its options (a "maybe" that was cut,
-*    see vagueness.py). If anything is broken,
+*    It drafts, checks and revises with tools on its own (see optimizer.py), and only
+*    returns a rewrite that passes the local checks below.
+* 3. The rewrite is checked locally again with findRewriteProblems (locks, tasks and
+*    options), as a safety net. If anything is broken,
 *    the attempt fails without a Validator call and those reasons are
 *    passed back to the Optimizer. Otherwise the Validator checks the rewrite
 *    against the original prompt.
@@ -143,10 +143,9 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
 
         hook.updateStage("validating")
         #Free local check first: a rewrite that drops a code block, URL, rule, step, number, task or option
-        #is REJECTED without paying for a Validator call then exact reasons go back to the Optimizer
-        brokenLocks = (findBrokenLocks(prompt, optimizationResult.optimizedPrompt)
-                       + findIntentChanges(prompt, optimizationResult.optimizedPrompt)
-                       + findDroppedOptions(prompt, optimizationResult.optimizedPrompt))
+        #is REJECTED without paying for a Validator call then exact reasons go back to the Optimizer.
+        #The Optimizer already runs this check before it submits, so this is a safety net
+        brokenLocks = findRewriteProblems(prompt, optimizationResult.optimizedPrompt)
         if brokenLocks:
             reason = "Dropped or changed required parts: " + "; ".join(brokenLocks)
 
