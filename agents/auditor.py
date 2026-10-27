@@ -75,10 +75,21 @@ def estimateCost(token_count: int, rate_per_1k: float = 0.003) -> float:
     return (token_count / 1000) * rate_per_1k
 
 """
+* @brief Counts filler words that actually make a request optional ("Maybe add tests"), which aren't filler.
+* @post
+* 1. Only words in FILLER_WORDS are counted, inside sentences vagueness.py finds to be optional.
+* 2. The import is done here, not at the top: vagueness.py imports this module (for loadNlp).
+"""
+def countOptionWords(text: str) -> int:
+    from agents.vagueness import findOptionalMarkers  # pylint: disable=import-outside-toplevel
+    return sum(len(FILLER_RE.findall(sentence)) for sentence in findOptionalMarkers(text))
+
+"""
 * @brief Runs fast, rule-based checks for common token-waste patterns.
 * @post
 * 1. The text's token-to-word ratio is checked for signs of verbiage meaning redundancy, or too wordy.
-* 2. Filler/politeness word frequency is counted and flagged if excessive.
+* 2. Filler/politeness word frequency is counted and flagged if excessive. Words that make a
+*    request optional ("Maybe add tests") aren't counted, since cutting them changes the request.
 * 3. Excessive blank lines/whitespace are detected.
 * 4. Readability (textstat) and grammar-based (spaCy) checks are added on.
 * 5. A list of human-readable issue descriptions is returned (empty if none found).
@@ -90,7 +101,7 @@ def runRuleCheck(text: str, token_count: int) -> list[str]:
     if word_count > 0 and (token_count / word_count) > 1.6: #chose 1.6 becayse its abit above the token to word ration(1.3). !!! <-- gather data on it
         issues.append("High token to word ratio. Perhaps too verbose?")
     
-    filler_hits = len(FILLER_RE.findall(text))
+    filler_hits = len(FILLER_RE.findall(text)) - countOptionWords(text)
     if filler_hits >= 3:
         issues.append(f"Too much filler words being used and or unnecessary politeness language ({filler_hits} instances happening)")
         

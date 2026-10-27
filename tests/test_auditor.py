@@ -90,3 +90,10 @@ def test_runSpacyCheck_without_model_returns_no_issues(monkeypatch):
     assert auditor.runSpacyCheck("Write a poem. Write a poem. Write a poem.") == []
     text = "please just really help me\n\n\nthanks"
     assert any("filler" in issue.lower() for issue in auditor.runRuleCheck(text, auditor.countTokens(text)))
+#"maybe" / "possibly" that make a request optional aren't filler, the same words as hedging still are
+@needsSpacyModel
+def test_runRuleCheck_option_words_are_not_filler():
+    options = "Write the parser. Maybe add tests. Maybe add docs. Possibly add a README."
+    assert not any("filler" in issue.lower() for issue in auditor.runRuleCheck(options, auditor.countTokens(options)))
+    hedging = "I was just wondering if you could maybe possibly help me write the parser, please."
+    assert any("filler" in issue.lower() for issue in auditor.runRuleCheck(hedging, auditor.countTokens(hedging)))

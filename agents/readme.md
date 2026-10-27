@@ -493,6 +493,54 @@ The orchestrator uses it in two places:
 
 ---
 
+## Vagueness detection (`vagueness.py`)
+
+### Status: Working and tested offline. The report is on every `OrchestrationResult` and in the backend response; the extension doesn't show it yet (10/26/2026)
+
+### What it does
+
+`findVagueness(prompt)` scores how vague a prompt is, locally with spaCy (no API call), and says which words made it so, the same way `detectSignals()` does for prompt types. Each signal comes with a ready-made clarifying question:
+
+| Kind | Points | Example | Question |
+| --- | --- | --- | --- |
+| missing slot | 2 | "Compare React and Vue." (no criteria) | "What should they be judged on: price, speed, ease of use, or something else?" |
+| empty reference | 2 | "Fix **this**." with nothing attached | "What does "this" refer to? Paste it or name it." |
+| judgement word | 1 | "Make it **better**." | "What would "better" look like when it's done?" |
+| fuzzy amount | 1 | "Add **a few** examples." | "How much is "a few"? Give a number if it matters." |
+| ambiguous word | 1 | "**Test** it." | "Should I write tests, or run it and report what happens?" |
+| open scope | 1 | "Add **anything else you think is relevant**." | "What exactly should ... cover?" |
+| optional | 0 | "**Maybe** add tests." | none: it's protected, not vague |
+
+Missing slots depend on the task (`intent.py`): fix needs the input and what goes wrong, generate needs a length (long-form writing), a language (code) and an audience (writing for readers), transform needs a direction ("improve" toward what?) or a target language/format, compare needs criteria, classify needs categories, and an `unclear` task is missing the action itself. The report has the `score`, a `level` ("clear" under 2, "somewhat vague" from 2, "vague" from 4), up to 3 `questions` (highest points first) and the `optionalParts`.
+
+### The Optimizer never resolves vagueness
+
+- **System prompt:** new rules say to keep options ("maybe add tests") and to keep a vague prompt exactly as vague, never adding a length, number, audience or criterion
+- **Added numbers are rejected locally** (`locks.py`): "a short story" → "a 500-word story" is a guess, so it fails without a Validator call
+- **Options must stay optional** (`findDroppedOptions()`, run with the other local checks): "Maybe add tests" → "Add tests" or dropping it entirely is rejected. Options are also in the must-preserve list as "optional (keep it optional): ..."
+- **The Auditor doesn't count option words as filler:** "maybe" in "Maybe add tests" carries meaning, so it no longer pushes a prompt over the filler threshold
+- **Questions go to the user:** `OrchestrationResult.vagueness` (also in `backend/schema/orchestrator.py`) carries the questions for the extension to show. This is better than letting the Optimizer guess, and a clarification of ~10 tokens is cheaper than a retry
+
+### To test: pytest tests/test_vagueness.py -v
+
+### Design decisions
+
+- **Templates, not an LLM, for the questions:** each signal already knows what's missing, so the question costs nothing
+- **Slots are looked for in the whole prompt:** "Write a blog post. It's for developers." fills the audience in another sentence
+- **Code, URLs, quoted and pasted text are the user's material, not their wording:** they're removed before looking for vague words, and they count as attached input for "this" / "the file"
+- **One gap counts once:** "Fix this." reports the empty "this", not also "what to fix". Repeated length words ("quick... short... nothing too long or detailed") are one signal
+- **Checked against the Optimizer's own examples:** all of them score 0 or 1, so specific prompts don't get questions
+
+### Known limitations / things to revisit
+
+- The point weights and thresholds (2/1, levels at 2 and 4) are the suggested starting values; they should be tuned on real prompts, like the Auditor's thresholds
+- Word lists are hand-made and English only (non-English prompts get an empty report)
+- Earlier conversation isn't visible: "Fix the login bug" asks for the code even if the user pasted it a message ago
+- The extension doesn't show the questions yet, and no "tokens saved by avoiding a retry" estimate is shown
+- "List assumptions next to the rewrite" (a field on `Rewrite`) and "fill the gap with the type's safe defaults" aren't done: the Optimizer is only told not to guess
+
+---
+
 ## Next steps (with examples)
 
 Updated 10/4/2026. Done since the last version of this list:

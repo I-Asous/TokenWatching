@@ -7,7 +7,7 @@ from agents.prompt_types import CODE_BLOCK_RE
 #Action classes and the verbs (lemmas) that signal them
 ACTION_CLASSES: dict[str, frozenset[str]] = {
     "generate": frozenset({"write", "create", "generate", "draft", "build", "make", "design", "compose", "produce",
-                           "suggest", "propose", "brainstorm", "plan"}),
+                           "suggest", "propose", "brainstorm", "plan", "name"}),
     "transform": frozenset({"rewrite", "refactor", "translate", "convert", "shorten", "rephrase", "improve", "edit",
                             "proofread", "simplify", "reformat", "paraphrase", "polish", "optimize", "expand"}),
     "fix": frozenset({"fix", "debug", "repair", "solve", "correct", "resolve", "troubleshoot"}),
