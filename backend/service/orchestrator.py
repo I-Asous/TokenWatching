@@ -70,7 +70,7 @@ class RunOrchestrator(OrchestrationHooks):
 
     # calls repository to save an optimization
     def saveOptimization(self, optimization: OptimizationResult):
-        optimizationFormatted : OptimizedPromptInsert = structure_response(optimization, self.user_id, feedback_validation_id=self.last_rejected_validation_id)
+        optimizationFormatted : OptimizedPromptInsert = structure_response(optimization, self.user_id, run_id=self.run_id, feedback_validation_id=self.last_rejected_validation_id)
         savedOptimization = create_optimized_prompt(self.db, optimizationFormatted)
         self.last_optimized_prompt_id = savedOptimization[0]["optimized_prompt_id"]
 

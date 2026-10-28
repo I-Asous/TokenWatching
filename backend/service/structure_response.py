@@ -16,6 +16,7 @@ def structure_response(result, user_id: str, run_id=None, optimized_prompt_id=No
     if isinstance(result, OptimizationResult):
         return OptimizedPromptInsert(
             user_id=user_id,
+            run_id=run_id,
             feedback_validation_id=feedback_validation_id,
             txt_prompt=result.optimizedPrompt,
             tokens=result.optimizedTokens,
