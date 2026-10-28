@@ -4,8 +4,8 @@ from auth import current_user
 
 from routes.optimized_prompts import router as optimized_prompts_router
 from routes.prompts import router as prompts_router
-# from routes.guest_prompts import router as guest_prompts_router
-from routes.users import router as users_router
+from routes.guest_prompts import router as guest_prompts_router
+# from routes.users import router as users_router
 from routes.prompt_w_optimized import router as prompt_w_optimized_router
 from routes.orchestrator import router as ochestrator_router
 from routes.audit import router as audit_router
