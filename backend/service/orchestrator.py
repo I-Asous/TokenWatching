@@ -9,7 +9,6 @@ from supabase import Client
 from agents.hooks.orchestrator import OrchestrationHooks
 from agents.orchestrator import OrchestrationResult, runPipeline
 from agents.validator import ValidationResult
-from repository.audit import create_audit
 from repository.client import get_supabase
 from repository.llm_call import create_llm_call
 from repository.orchestration import create_orchestration, update_orchestration, update_orchestration_status
@@ -21,7 +20,8 @@ from schema.llm_call import LlmCall
 from schema.optimized_prompts import OptimizedPromptInsert
 from schema.orchestration import OrchestrationInsert, OrchestrationUpdate
 from schema.prompts import PromptInsert
-from schema.audit import AuditInsert
+from service.audit import save_audit
+from service.structure_response import structure_response
 
 from agents.auditor import AuditResult
 from agents.optimizer import OptimizationResult
@@ -66,8 +66,7 @@ class RunOrchestrator(OrchestrationHooks):
 
     # calls repository to save an audit
     def saveAudit(self, audit: AuditResult):
-        auditFormatted : AuditInsert = structure_response(audit, self.user_id, run_id=self.run_id)
-        create_audit(self.db, auditFormatted)
+        save_audit(self.db, self.user_id, self.run_id, audit)
 
     # calls repository to save an optimization
     def saveOptimization(self, optimization: OptimizationResult):
@@ -93,29 +92,3 @@ class RunOrchestrator(OrchestrationHooks):
     def finishJob(self, result: OrchestrationResult):
         orchestrationFormated : OrchestrationUpdate = structure_response(result, self.user_id, final_optimized_prompt_id=self.final_optimized_prompt_id)
         update_orchestration(self.db, self.run_id, orchestrationFormated)
-
-## helpar to structure the response into a proper insert and stuff (bc sometimes it has more stuff...)
-def structure_response(result, user_id: str, run_id=None, optimized_prompt_id=None, feedback_validation_id=None, final_optimized_prompt_id=None):
-    if isinstance(result, AuditResult):
-        return AuditInsert(user_id=user_id, run_id=run_id, token_count=result.token_count, estimated_cost=result.estimatedCost, severity=result.severity)
-    
-    if isinstance(result, OptimizationResult):
-        return OptimizedPromptInsert(
-            user_id=user_id,
-            feedback_validation_id=feedback_validation_id,
-            txt_prompt=result.optimizedPrompt,
-            tokens=result.optimizedTokens,
-            tokens_saved=result.tokensSaved,
-            percent_saved=result.percentSaved,
-            unchanged=result.optimizedPrompt == result.originalPrompt,
-            changes=result.changes,
-            preserved_constraints=result.preservedConstraints)
-    
-    if isinstance(result, ValidationResult):
-        return ValidationInsert(user_id=user_id, optimized_prompt_id=optimized_prompt_id,
-                                score=result.qualityScore, passed=result.passed,
-                                reasoning=result.reasoning, react_trace=result.reactTrace)
-    
-    if isinstance(result, OrchestrationResult):
-        return OrchestrationUpdate(status="done", final_optimized_prompt_id=final_optimized_prompt_id)
-    raise TypeError(f"{type(result).__name__} is not a value type to structure...")
