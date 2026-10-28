@@ -89,6 +89,11 @@ class RunOrchestrator(OrchestrationHooks):
     # orchestrator is done with it's job and we can update it with any necessary information
     def finishJob(self, result: OrchestrationResult):
         orchestrationFormated : OrchestrationUpdate = structure_response(result, self.user_id, final_optimized_prompt_id=self.final_optimized_prompt_id)
+        # an agent's api call failed and the original prompt was returned, so the run is still done
+        # but we keep which stage failed and why (the stage is still the one that was running)
+        if result.error:
+            orchestrationFormated.error_stage = self.status
+            orchestrationFormated.error_message = result.error
         update_orchestration(self.db, self.run_id, orchestrationFormated)
 
 ## helpar to structure the response into a proper insert and stuff (bc sometimes it has more stuff...)

@@ -2,8 +2,12 @@ import os
 from dataclasses import dataclass
 from anthropic import Anthropic
  
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
- 
+#A hung call raises APITimeoutError, which the orchestrator catches
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=10.0)
+
+#Lowest score that passes when no prompt type asks for more (same as the system prompt says)
+DEFAULT_PASS_SCORE = 6
+
  
 @dataclass
 class ValidationResult:
@@ -46,11 +50,25 @@ not on a general impression.
 """
 * @brief Builds the message sent to the validator LLM.
 * @post
-* 1. The original and optimized prompts are both included, clearly labeled.
-* 2. A single combined string is returned, ready to send to the model.
+* 1. If type rules were given (prompt_types.py, the same rules the Optimizer
+*    followed), they come first, with the note that weakening one is a loss.
+*    So a softened security rule scores in the 3-5 band instead of passing as
+*    a "phrasing difference". They go in the message, not the system prompt,
+*    so the system prompt stays the same on every call.
+* 2. The original and optimized prompts are both included, clearly labeled.
+* 3. A single combined string is returned, ready to send to the model.
 """
-def buildUserMessage(originalPrompt: str, optimizedPrompt: str) -> str:
+def buildUserMessage(originalPrompt: str, optimizedPrompt: str, typeRules: str = "") -> str:
+    typeSection = ""
+    if typeRules:
+        typeRulesList = "\n".join(f"- {rule}" for rule in typeRules.splitlines() if rule.strip())
+        typeSection = (
+            "The rewrite had to follow these rules for this kind of prompt. Any requirement it weakens, "
+            "softens or drops under them is a meaningful loss (score 3-5), not a phrasing difference:\n"
+            f"{typeRulesList}\n\n"
+        )
     return (
+        f"{typeSection}"
         f"original prompt:\n{originalPrompt}\n\n"
         f"optimized prompt:\n{optimizedPrompt}"
         )
@@ -94,18 +112,19 @@ def parseValidatorReply(reply: str) -> tuple[float, bool, str, str]:
 """
 * @brief Sends both prompt versions to Claude for a quality comparison.
 * @post
-* 1. A request is sent to the Claude API with the validator system prompt.
+* 1. A request is sent to the Claude API with the validator system prompt,
+*    and the type rules (if any) in the message.
 * 2. The model's reply is parsed into score, passed, reason, and trace.
 * 3. The raw parsed values are returned.
 """
-def callValidatorLLM(originalPrompt: str, optimizedPrompt: str) -> tuple[float, bool, str, str]:
+def callValidatorLLM(originalPrompt: str, optimizedPrompt: str, typeRules: str = "") -> tuple[float, bool, str, str]:
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
         system=VALIDATOR_SYSTEM_PROMPT,
         messages=[{
             "role": "user",
-            "content": buildUserMessage(originalPrompt, optimizedPrompt)
+            "content": buildUserMessage(originalPrompt, optimizedPrompt, typeRules)
         }]
     )
     reply = response.content[0].text
@@ -117,11 +136,17 @@ def callValidatorLLM(originalPrompt: str, optimizedPrompt: str) -> tuple[float, 
 * @post
 * 1. If the optimized prompt is identical to the original, validation
 *    is skipped and an automatic pass is returned (no LLM call needed).
-* 2. Otherwise, both versions are sent to the validator LLM.
-* 3. A populated ValidationResult is returned, containing the score,
+* 2. Otherwise, both versions are sent to the validator LLM, with the prompt type's rules
+*    (typeRules), so it judges against what that kind of prompt must keep.
+* 3. The rewrite passes only if the LLM passed it AND its score reaches passScore. Stricter
+*    prompt types (security, code: 7) set a slightly higher bar than the LLM's own 6
+*    (prompt_types.py). A rewrite failed only by the bar says so in its reasoning,
+*    so the Optimizer's retry knows what fell short.
+* 4. A populated ValidationResult is returned, containing the score,
 *    pass/fail verdict, reasoning, and reasoning trace.
 """
-def validatePrompt(originalPrompt: str, optimizedPrompt: str) -> ValidationResult:
+def validatePrompt(originalPrompt: str, optimizedPrompt: str, passScore: int = DEFAULT_PASS_SCORE,
+                   typeRules: str = "") -> ValidationResult:
     if originalPrompt.strip() == optimizedPrompt.strip():
         return ValidationResult(
             originalPrompt=originalPrompt,
@@ -132,8 +157,11 @@ def validatePrompt(originalPrompt: str, optimizedPrompt: str) -> ValidationResul
             reactTrace="Skipped -- prompts are identical, no comparison needed.",
         )
  
-    score, passed, reason, reactTrace = callValidatorLLM(originalPrompt, optimizedPrompt)
- 
+    score, passed, reason, reactTrace = callValidatorLLM(originalPrompt, optimizedPrompt, typeRules)
+    if passed and score < passScore:
+        passed = False
+        reason = f"{reason} (Score {score:g} is below the {passScore} this kind of prompt needs, so keep more of the original.)"
+
     return ValidationResult(
         originalPrompt=originalPrompt,
         optimizedPrompt=optimizedPrompt,

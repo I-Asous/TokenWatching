@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from jwt.exceptions import PyJWKClientConnectionError
 
 import auth
-from conftest import EXTENSION_ORIGIN, KEY, OTHER_KEY, api_routes, bearer, make_token
+from conftest import EXTENSION_ORIGIN, KEY, OTHER_KEY, PUBLIC_PATHS, api_routes, bearer, make_token
 
 # pylint: disable=redefined-outer-name,unused-argument  # pytest fixtures
 
@@ -62,7 +62,7 @@ def test_api_routes_were_found():
     assert len(list(api_routes())) >= 12
 
 
-@pytest.mark.parametrize("method,path", [(m, f) for m, p, f in api_routes() if p != "/"])
+@pytest.mark.parametrize("method,path", [(m, f) for m, p, f in api_routes() if p not in PUBLIC_PATHS])
 def test_every_api_route_requires_a_token(client, db, user_clients, method, path):
     assert client.request(method, path).status_code == 401
     assert not db.calls

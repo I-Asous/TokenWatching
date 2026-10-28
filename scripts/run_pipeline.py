@@ -57,6 +57,7 @@ def main():
     print("Final:", result.finalPrompt)
     print()
     print("Optimized:", result.wasOptimized)
+    print("Prompt types:", result.promptTypes)
     print("Audit severity:", result.auditResult.severity)
     print("Audit issues:", result.auditResult.issues)
     print()
