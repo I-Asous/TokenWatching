@@ -201,7 +201,8 @@ def checkSteps(steps: list[str], rewrite: str) -> list[str]:
 *    ignoring trailing spaces).
 * 2. Constraints must survive in some sentence of the rewrite, with negations kept.
 * 3. Numbered steps must all survive, in order.
-* 4. Every number must still appear in the rewrite's prose (written as digits or as a word).
+* 4. Every number must still appear in the rewrite's prose (written as digits or as a word),
+*    and the rewrite may not add a number the original didn't have.
 * 5. A list of readable reasons is returned, one per broken lock (empty if the rewrite keeps everything).
 *    The reasons are written so they can be passed straight back to the Optimizer as a RejectedAttempt.
 """
@@ -231,6 +232,12 @@ def findBrokenLocks(prompt: str, rewrite: str) -> list[str]:
 
     steps = [lock.text for lock in locks if lock.kind == "step"]
     reasons += checkSteps(steps, rewrite)
+
+    #A number the person never gave is a guess ("a short story" -> "a 500-word story"), and guessing changes the request
+    originalNumbers = {lock.text for lock in locks if lock.kind == "number"}
+    for value in rewriteNumbers:
+        if value not in originalNumbers:
+            reasons.append(f'number added that the original didn\'t give: "{value}" (don\'t guess details the person didn\'t state)')
     return reasons
 
 

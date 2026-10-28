@@ -4,6 +4,7 @@ import Chatbox from './pages/Chatbox';
 import History from './pages/History';
 import Stats from './pages/Stats';
 import Navbar, { type Tab } from './components/Navbar';
+import extensionLogo from '../../Logo.png';
 
 // Done with google login
 const googleDone = new URLSearchParams(window.location.search).get('google') === 'done';
@@ -56,6 +57,7 @@ function App() {
   return (
     <>
       <div className="Logo">
+        <img className="extension-logo-icon" src={extensionLogo} alt="" />
         <h1>Token Watching</h1>
       </div>
 

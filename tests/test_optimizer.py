@@ -250,3 +250,8 @@ def test_optimizePrompt_forwards_must_preserve(fakeClient):
     messages = fakeClient("Write a 300-word bio.")
     optimizer.optimizePrompt("Please write a 300-word bio.", mustPreserve=["number: 300"])
     assert "- number: 300" in messages.lastRequest["messages"][0]["content"]
+
+#The system prompt tells the Optimizer to keep options optional and never resolve vagueness itself
+def test_system_prompt_keeps_options_and_vagueness():
+    assert "maybe add tests" in optimizer.OPTIMIZER_SYSTEM_PROMPT
+    assert "keep it exactly as vague" in optimizer.OPTIMIZER_SYSTEM_PROMPT

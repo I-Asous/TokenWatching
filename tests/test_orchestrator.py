@@ -242,6 +242,29 @@ def test_buildMustPreserve():
     assert "number: 2" in items
     assert not any("example.com" in item or "def add" in item for item in items)
 
+#The vagueness report is attached even when optimization is skipped, so the extension can ask its questions
+def test_runPipeline_attaches_vagueness(fakeAgents):
+    fakeAgents(issues=[])
+    result = orchestrator.runPipeline("Make it better.")
+    assert result.vagueness.level == "vague"
+    assert result.vagueness.questions[0].startswith("Improve it toward what")
+
+#A rewrite that turns an option into a requirement is rejected without a Validator call
+def test_runPipeline_dropped_option_skips_validator(fakeAgents):
+    prompt = "Please write a Python script that renames files. Maybe add logging. Thanks so much!"
+    kept = "Write a Python script that renames files. Optionally add logging."
+    fake = fakeAgents(
+        issues=["filler"],
+        rewrites=[("Write a Python script that renames files and adds logging.", 9), (kept, 7)],
+        verdicts=[(True, "Only filler removed.")],
+    )
+    result = orchestrator.runPipeline(prompt)
+
+    assert fake.validatorCalls == [kept]
+    assert "optional request made required" in fake.rejectedCalls[1][0].reason
+    assert "optional (keep it optional): Maybe add logging." in fake.preserveCalls[0]
+    assert result.finalPrompt == kept
+
 #If every rewrite breaks a lock, the Validator is never called and the original prompt is returned
 def test_runPipeline_every_rewrite_breaks_lock_returns_original(fakeAgents):
     attempts = orchestrator.MAX_OPTIMIZATION_ATTEMPTS

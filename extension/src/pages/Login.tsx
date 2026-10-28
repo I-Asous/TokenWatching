@@ -5,9 +5,8 @@ type LoginProps = {
 function Login({ onLogin }: LoginProps) {
   return (
     <>
-    <div className="Logo">
       <h1>Token Watching</h1>
-      </div>
+
 
       <div className="Board1">
       

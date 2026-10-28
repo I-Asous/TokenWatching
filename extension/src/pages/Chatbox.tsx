@@ -1,37 +1,68 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from "react";
+
+type ChatTurn = {
+  id: number;
+  prompt: string;
+  result: string | null;
+};
+
+const promptExamples = [
+  "Write a polite email asking my manager to move our meeting to tomorrow.",
+  "Explain photosynthesis in simple terms for a middle school student.",
+  "Help me plan a quick dinner using rice, vegetables, and eggs.",
+  "Summarize these notes into three clear action items.",
+];
+
+// The backend currently sends mock progress stages over its websocket.
+const STAGE_MESSAGES: Record<string, string> = {
+  auditing: "Calculating Cost...",
+  optimizing: "Cleaning Up...",
+  validating: "Double Checking...",
+  done: "Done!",
+};
 
 function Chatbox() {
   const [promptValue, setPromptValue] = useState("");
+  const [promptExampleIndex, setPromptExampleIndex] = useState(0);
+  const [showPromptExample, setShowPromptExample] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [sendMessage, setSendMessage] = useState("");
   const [sendError, setSendError] = useState("");
+  const [stage, setStage] = useState("");
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
 
   useEffect(() => {
-    // 1. Find the active tab when Chatbox loads
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs[0];
-      
-      if (activeTab?.id) {
-        // 2. Ask the content script for ChatGPT's prompt text
-        chrome.tabs.sendMessage(
-          activeTab.id, 
-          { action: "get_chatgpt_text" }, 
-          (response) => {
-            // 3. Put the response into extension
-            if (response && response.promptText) {
-              setPromptValue(response.promptText);
-            }
-          }
-        );
-      }
+      if (!activeTab?.id) return;
+
+      chrome.tabs.sendMessage(activeTab.id, { action: "get_chatgpt_text" }, (response) => {
+        if (response?.promptText) setPromptValue(response.promptText);
+      });
     });
   }, []);
 
-const GUEST_USER_ID = "00e5e341-5160-4908-9648-802a17def3ce";
+  useEffect(() => {
+    if (promptValue) {
+      setShowPromptExample(false);
+      return;
+    }
 
-async function getGuestUserId() {
-  return GUEST_USER_ID;
-}
+    setShowPromptExample(true);
+    let transitionTimer: number | undefined;
+    const cycleTimer = window.setInterval(() => {
+      setShowPromptExample(false);
+      transitionTimer = window.setTimeout(() => {
+        setPromptExampleIndex((index) => (index + 1) % promptExamples.length);
+        setShowPromptExample(true);
+      }, 300);
+    }, 3600);
+
+    return () => {
+      window.clearInterval(cycleTimer);
+      if (transitionTimer !== undefined) window.clearTimeout(transitionTimer);
+    };
+  }, [promptValue]);
 
   async function sendPrompt() {
     const txtPrompt = promptValue.trim();
@@ -44,33 +75,52 @@ async function getGuestUserId() {
     setIsSending(true);
     setSendError("");
     setSendMessage("");
+    setStage("");
 
+    const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
     try {
-      const userId = await getGuestUserId();
-      const response = await fetch("http://127.0.0.1:8000/prompts/prompt", {
+      const response = await fetch(`${apiBaseUrl}/prompts/guest-prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          txt_prompt: txtPrompt,
-          tokens: 0,
-          context: [],
-        }),
+        body: JSON.stringify({ txt_prompt: txtPrompt }),
       });
-      const result = await response.json();
+      const responseData = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(result.detail ?? `Backend request failed (${response.status}).`);
+        throw new Error(responseData.detail ?? `Backend request failed (${response.status}).`);
       }
 
-      setSendMessage("The backend received prompt.");
+      setTurns((previousTurns) => [
+        ...previousTurns,
+        { id: Date.now(), prompt: txtPrompt, result: null },
+      ]);
+      setPromptValue("");
+      setSendMessage("Prompt saved. Optimization results are not connected yet.");
     } catch (error) {
-      setSendError(
-        error instanceof Error
-          ? error.message
-          : "Could not reach the backend",
-      );
-    } finally {
+      setSendError(error instanceof Error ? error.message : "Could not reach the backend");
+      setIsSending(false);
+      return;
+    }
+
+    // Keep main's progress-stage UI. The current backend websocket sends mock stages.
+    try {
+      const socketUrl = `${apiBaseUrl.replace(/^http/, "ws")}/ws`;
+      const socket = new WebSocket(socketUrl);
+      socket.onmessage = (event) => {
+        try {
+          const progress = JSON.parse(event.data) as { stage?: string };
+          if (progress.stage) setStage(progress.stage);
+        } catch {
+          setSendError("Received an unreadable progress update.");
+        }
+      };
+      socket.onerror = () => {
+        setSendError("Prompt saved, but progress updates could not connect.");
+        setIsSending(false);
+      };
+      socket.onclose = () => setIsSending(false);
+    } catch {
+      setSendError("Prompt saved, but progress updates could not connect.");
       setIsSending(false);
     }
   }
@@ -80,24 +130,56 @@ async function getGuestUserId() {
       <div className="Board1">
         <h4 className="enter">Enter Prompt</h4>
 
-        {}
-        <textarea 
-          className="promptext"
-          value={promptValue}
-          placeholder='Ex: Write me an email telling my boss that Ill be late to work due to an emergency at work'
-          onChange={(e) => setPromptValue(e.target.value)}
-        />
-        <div className="buttons">
+        <div className="chat-history">
+          {turns.map((turn) => (
+            <div className="chat-turn" key={turn.id}>
+              <div className="chat-message user-message">
+                <span className="message-label">You</span>
+                <p>{turn.prompt}</p>
+              </div>
+              <div className="chat-message result-message">
+                <span className="message-label">Result</span>
+                <p>{turn.result ?? "No optimized result yet."}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="prompt-input-wrap">
+          <textarea
+            className="promptext"
+            value={promptValue}
+            aria-label="Enter a prompt"
+            onChange={(event) => setPromptValue(event.target.value)}
+          />
+          {!promptValue && (
+            <div
+              className={`prompt-example${showPromptExample ? "" : " is-fading"}`}
+              aria-hidden="true"
+            >
+              {promptExamples[promptExampleIndex]}
+            </div>
+          )}
           <button
             type="button"
-            className="app-button"
+            className="prompt-send-button"
             onClick={sendPrompt}
             disabled={isSending}
+            aria-label={isSending ? "Sending prompt" : "Send prompt"}
+            title={isSending ? "Sending..." : "Send prompt"}
           >
-            {isSending ? "Sending..." : "test"}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
           </button>
         </div>
         {sendMessage && <p role="status">{sendMessage}</p>}
+        {stage && (
+          <div className="progress" role="status">
+            {stage !== "done" && <span className="spinner" />}
+            {STAGE_MESSAGES[stage] ?? stage}
+          </div>
+        )}
         {sendError && <p role="alert">{sendError}</p>}
       </div>
     </div>
