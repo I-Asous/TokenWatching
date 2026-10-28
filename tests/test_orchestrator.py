@@ -1,11 +1,19 @@
 """
 Offline unit tests for the orchestrator
 """
+from dataclasses import replace
 import pytest
+#anthropic 1.x is built on httpx2 and 0.x on httpx; build the fake request with whichever the SDK uses
+try:
+    import httpx2 as httpx
+except ImportError:
+    import httpx
+from anthropic import APIConnectionError
 from agents import orchestrator
 from agents.auditor import AuditResult
 from agents.optimizer import OptimizationResult, RejectedAttempt
 from agents.validator import ValidationResult
+from agents.prompt_types import PROFILES
 
 PROMPT = "Please, could you kindly write a short story about a dragon? Thank you so much!"
 REWRITE = "Write a short story about a dragon."
@@ -22,13 +30,19 @@ class FakeAgents:
         self.validatorCalls = []
         self.targets = []
         self.preserveCalls = []
+        self.skipChecks = []
+        self.typeRules = []
+        self.passScores = []
+        self.validatorRules = []
 
-    def auditPrompt(self, prompt, target):
+    def auditPrompt(self, prompt, target, skipChecks=frozenset()):
         self.targets.append(target)
+        self.skipChecks.append(skipChecks)
         return AuditResult(token_count=20, estimatedCost=0.0, issues=self.issues, severity="Medium")
 
-    def optimizePrompt(self, prompt, issues, target, rejectedAttempts=None, mustPreserve=None):
+    def optimizePrompt(self, prompt, issues, target, rejectedAttempts=None, mustPreserve=None, typeRules=""):
         self.targets.append(target)
+        self.typeRules.append(typeRules)
         self.preserveCalls.append(list(mustPreserve or []))
         rewrite, tokensSaved = self.rewrites[len(self.optimizerCalls)]
         self.optimizerCalls.append(list(issues))
@@ -43,7 +57,9 @@ class FakeAgents:
             changes=["removed filler"],
         )
 
-    def validatePrompt(self, originalPrompt, optimizedPrompt):
+    def validatePrompt(self, originalPrompt, optimizedPrompt, passScore=6, typeRules=""):
+        self.passScores.append(passScore)
+        self.validatorRules.append(typeRules)
         passed, reason = self.verdicts[len(self.validatorCalls)]
         self.validatorCalls.append(optimizedPrompt)
         return ValidationResult(
@@ -121,7 +137,8 @@ def test_runPipeline_retries_with_validator_feedback(fakeAgents):
     assert result.tokensSaved == 12
 
 #Every earlier rejection is passed on, not just the latest one
-def test_runPipeline_passes_all_rejected_attempts(fakeAgents):
+def test_runPipeline_passes_all_rejected_attempts(fakeAgents, monkeypatch):
+    monkeypatch.setattr(orchestrator, "MAX_OPTIMIZATION_ATTEMPTS", 3)
     fake = fakeAgents(
         issues=["filler"],
         rewrites=[("Write a story.", 15), ("Write a short story.", 14), (REWRITE, 12)],
@@ -161,6 +178,44 @@ def test_runPipeline_all_attempts_fail_returns_original(fakeAgents):
     assert result.wasOptimized is False
     assert result.tokensSaved == 0
     assert result.percentSaved == 0.0
+
+#A failed Validator call returns the original prompt and isn't fed back to the Optimizer as a rejection
+def test_runPipeline_validator_api_error_returns_original(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)] * 2)
+    def fail(originalPrompt, optimizedPrompt, passScore=6, typeRules=""):
+        raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    monkeypatch.setattr(orchestrator, "validatePrompt", fail)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert len(fake.optimizerCalls) == 1
+    assert result.finalPrompt == PROMPT
+    assert result.wasOptimized is False
+    assert result.attempts == []
+    assert result.tokensSaved == 0
+    assert result.error.startswith("Validator call failed")
+
+#A failed Optimizer call returns the original prompt, records the error and doesn't call the Validator
+def test_runPipeline_optimizer_api_error_returns_original(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"])
+    def fail(prompt, issues, target, rejectedAttempts=None, mustPreserve=None, typeRules=""):
+        raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    monkeypatch.setattr(orchestrator, "optimizePrompt", fail)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.validatorCalls == []
+    assert result.finalPrompt == PROMPT
+    assert result.wasOptimized is False
+    assert result.error.startswith("Optimizer call failed")
+
+#A run without API failures has no error, even when every rewrite is rejected
+def test_runPipeline_rejections_are_not_errors(fakeAgents):
+    attempts = orchestrator.MAX_OPTIMIZATION_ATTEMPTS
+    fakeAgents(
+        issues=["filler"],
+        rewrites=[("Write a story.", 15)] * attempts,
+        verdicts=[(False, "Dropped the dragon.")] * attempts,
+    )
+    assert orchestrator.runPipeline(PROMPT).error is None
 
 #The retry limit comes from MAX_OPTIMIZATION_ATTEMPTS
 def test_runPipeline_respects_max_attempts(fakeAgents, monkeypatch):
@@ -288,3 +343,47 @@ def test_runPipeline_no_savings_returns_original(fakeAgents, rewrite):
     assert result.finalPrompt == PROMPT
     assert result.wasOptimized is False
     assert result.attempts == []
+
+CHAT_PROMPT = "Hey, could you please suggest some fun weekend plans for me? Thanks so much!"
+CODE_PROMPT = "Hey, could you please fix this, thanks so much!\n```python\ndef add(a, b): return a - b\n```"
+CODE_REWRITE = "Fix this:\n```python\ndef add(a, b): return a - b\n```"
+
+#The prompt's type profile reaches every agent: skipped checks, type rules (Optimizer and Validator) and the pass score
+def test_runPipeline_passes_type_profile(fakeAgents):
+    fake = fakeAgents(issues=["filler"], rewrites=[(CODE_REWRITE, 8)], verdicts=[(True, "Only filler removed.")])
+    result = orchestrator.runPipeline(CODE_PROMPT)
+
+    assert result.promptTypes == ["code"]
+    assert fake.skipChecks == [PROFILES["code"].skipChecks]
+    assert fake.typeRules == [PROFILES["code"].optimizerRules]
+    assert fake.passScores == [PROFILES["code"].passScore]
+    assert fake.validatorRules == [PROFILES["code"].optimizerRules]
+
+#A prompt with several types gets the strictest settings of all of them
+def test_runPipeline_combines_several_types(fakeAgents):
+    prompt = "Please write a Python function that checks a password. Never log the password. Must follow GDPR."
+    fake = fakeAgents(issues=["filler"], rewrites=[(prompt, 0)])
+    result = orchestrator.runPipeline(prompt)
+
+    assert result.promptTypes == ["security", "code"]
+    assert fake.passScores == [] #saved nothing, so the Validator wasn't called
+    assert PROFILES["security"].optimizerRules in fake.typeRules[0]
+    assert PROFILES["code"].optimizerRules in fake.typeRules[0]
+
+#A prompt with no type signals is conversational, and the result says so even when optimization is skipped
+def test_runPipeline_conversational_by_default(fakeAgents):
+    fake = fakeAgents(issues=[])
+    result = orchestrator.runPipeline(CHAT_PROMPT)
+
+    assert result.promptTypes == ["conversational"]
+    assert fake.skipChecks == [frozenset()]
+
+#A type that may not be optimized is returned as-is, without calling the Optimizer
+def test_runPipeline_type_without_optimize_skips_optimizer(fakeAgents, monkeypatch):
+    monkeypatch.setitem(PROFILES, "conversational", replace(PROFILES["conversational"], optimize=False))
+    fake = fakeAgents(issues=["filler"])
+    result = orchestrator.runPipeline(CHAT_PROMPT)
+
+    assert fake.optimizerCalls == []
+    assert result.finalPrompt == CHAT_PROMPT
+    assert result.wasOptimized is False

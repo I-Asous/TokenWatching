@@ -54,7 +54,7 @@ def test_curly_apostrophes():
 #Combining takes the highest pass score, every skipped check, every rule, strictest first
 def test_combineProfiles_strictest_wins():
     combined = combineProfiles(["creative", "code", "research"])
-    assert combined.passScore == 8
+    assert combined.passScore == PROFILES["code"].passScore == 7
     assert combined.strictness == PROFILES["code"].strictness
     assert {CHECK_READABILITY, CHECK_TOKEN_RATIO} <= combined.skipChecks
     rules = combined.optimizerRules.splitlines()

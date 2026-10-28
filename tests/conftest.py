@@ -30,6 +30,8 @@ OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 # these routers verify the token in the backend (Depends(current_user));
 # every other API route queries supabase as the caller and relies on RLS
 VERIFIED_PREFIXES = ("/users", "/orchestrator")
+# routes meant to work without a token: the health check, and guest mode (saves under the shared guest account)
+PUBLIC_PATHS = ("/", "/prompts/guest-prompt")
 
 
 def make_token(key=KEY, headers=None, drop=(), **claims):
@@ -51,9 +53,9 @@ def api_routes():
 
 
 def data_routes():
-    """API routes that query supabase as the caller (everything but "/" and the verified routers)."""
+    """API routes that query supabase as the caller (everything but the public routes and the verified routers)."""
     return [(method, filled) for method, path, filled in api_routes()
-            if path != "/" and not path.startswith(VERIFIED_PREFIXES)]
+            if path not in PUBLIC_PATHS and not path.startswith(VERIFIED_PREFIXES)]
 
 
 def bearer(token):

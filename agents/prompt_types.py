@@ -69,26 +69,29 @@ SIGNALS: dict[str, list[tuple[re.Pattern, int]]] = {
 @dataclass(frozen=True)
 class TypeProfile:
     strictness: int #higher wins when a prompt has several types
-    passScore: int #Validator score (1-10) a rewrite needs to pass
+    #Validator score (1-10) a rewrite needs to pass. The Validator's rubric already calls 6-8 "requirements fully
+    #preserved", so stricter types get one point of margin; the strictness itself comes from the Validator
+    #being told the type's rules (a weakened requirement then scores 3-5), not from a high bar
+    passScore: int
     skipChecks: frozenset[str] #Auditor rule checks that misfire on this type
     optimizerRules: str #what the Optimizer may and may not cut, added to its message
     optimize: bool = True #False = leave prompts of this type as they are
 
 PROFILES: dict[str, TypeProfile] = {
     "security": TypeProfile(
-        strictness=6, passScore=8, skipChecks=frozenset(),
+        strictness=6, passScore=7, skipChecks=frozenset(),
         optimizerRules=("Security/compliance prompt: never remove or soften a requirement, restriction, policy, "
                         "compliance term or audit requirement. Only remove politeness and filler.")),
     "code": TypeProfile(
-        strictness=5, passScore=8, skipChecks=frozenset({CHECK_TOKEN_RATIO, CHECK_READABILITY, CHECK_ADVERBS}),
+        strictness=5, passScore=7, skipChecks=frozenset({CHECK_TOKEN_RATIO, CHECK_READABILITY, CHECK_ADVERBS}),
         optimizerRules=("Code prompt: never change code, identifiers, types, error handling or conditions. "
                         "Only shorten explanations, framing and examples.")),
     "workflow": TypeProfile(
-        strictness=4, passScore=7, skipChecks=frozenset(),
+        strictness=4, passScore=6, skipChecks=frozenset(),
         optimizerRules=("Workflow prompt: keep every step, its order and every if/otherwise condition. "
                         "Only shorten the wording inside steps.")),
     "research": TypeProfile(
-        strictness=3, passScore=7, skipChecks=frozenset({CHECK_TOKEN_RATIO}),
+        strictness=3, passScore=6, skipChecks=frozenset({CHECK_TOKEN_RATIO}),
         optimizerRules=("Research prompt: keep every source, link and citation or attribution requirement. "
                         "Only shorten the framing around them.")),
     "creative": TypeProfile(
