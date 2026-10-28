@@ -120,3 +120,44 @@ def test_runRuleCheck_skips_checks(monkeypatch):
     skipped = runRuleCheck("x", 5, frozenset({CHECK_TOKEN_RATIO, CHECK_READABILITY, CHECK_ADVERBS}))
     assert skipped == []
     assert "readability" not in calls and calls["adverbs"] is False
+
+DRAGON = "Please, could you kindly help me write a short story about a dragon? Thank you so much!"
+
+#Politeness phrases count as whole spans, so a prompt with few filler words but lots of politeness is flagged
+def test_findRemovableFiller_flags_politeness_phrases():
+    removable, total, spans = auditor.estimateRemovableTokens(DRAGON)
+    assert spans == ["Please", "could you kindly help me", "Thank you so much!"]
+    assert removable > total / 3
+    issue = auditor.findRemovableFiller(DRAGON)
+    assert issue.startswith(f"About {removable} of {total} tokens")
+    assert "'could you kindly help me'" in issue
+    assert any(issue == found for found in runRuleCheck(DRAGON, countTokens(DRAGON)))
+
+#A cut of a token or two isn't worth a rewrite, however short the prompt
+@pytest.mark.parametrize("prompt", ["Please explain the difference between TCP and UDP.",
+                                    "Can you explain how DNS works?",
+                                    "Write a short story about a dragon."])
+def test_findRemovableFiller_ignores_small_cuts(prompt):
+    assert auditor.findRemovableFiller(prompt) is None
+
+#Code blocks are the user's material: politeness inside them isn't counted
+def test_estimateRemovableTokens_skips_code_blocks():
+    prompt = "Fix this:\n```python\n# thanks, please just work\ndef add(a, b): return a - b\n```"
+    assert auditor.estimateRemovableTokens(prompt)[0] == 0
+
+#Overlapping matches ("could you please" and "please") count once
+def test_estimateRemovableTokens_merges_overlaps():
+    assert auditor.estimateRemovableTokens("Could you please list three fruits?")[2] == ["Could you please"]
+
+#Hedge words that make a request optional aren't removable
+@needsSpacyModel
+def test_estimateRemovableTokens_keeps_options():
+    assert auditor.estimateRemovableTokens("Write the parser. Maybe add tests. Possibly add a README.")[0] == 0
+
+#The LLM review runs from LLM_REVIEW_MIN_TOKENS when the rule checks find nothing, and not below it
+@pytest.mark.parametrize("tokens, reviewed", [(auditor.LLM_REVIEW_MIN_TOKENS - 1, False), (auditor.LLM_REVIEW_MIN_TOKENS, True)])
+def test_auditPrompt_llm_review_gate(monkeypatch, tokens, reviewed):
+    monkeypatch.setattr(auditor, "countTokens", lambda text, target: tokens)
+    monkeypatch.setattr(auditor, "runRuleCheck", lambda text, token_count, skipChecks: [])
+    monkeypatch.setattr(auditor, "llmReview", lambda text: ["Repeats the same instruction twice."])
+    assert auditor.auditPrompt("Write a report.").issues == (["Repeats the same instruction twice."] if reviewed else [])

@@ -23,7 +23,7 @@ The spaCy checks need the English model: `pip install -r requirements.txt` then 
 
 ### Design decisions
 
-- **Tiered analysis (rule-based first, LLM only when needed):** since Agent 1's whole job is flagging wasted tokens, it shouldn't itself waste tokens doing so itself. Cheaper, deterministic checks run first (token-to-word ratio, filler word count, excessive blank lines). The LLM review only fires if the prompt is long (> 500 tokens) and none of the rule-based checks caught anything ie there might be subtler issues.
+- **Tiered analysis (rule-based first, LLM only when needed):** since Agent 1's whole job is flagging wasted tokens, it shouldn't itself waste tokens doing so itself. Cheaper, deterministic checks run first (token-to-word ratio, removable politeness/filler tokens, excessive blank lines). The LLM review only fires if the prompt has at least `LLM_REVIEW_MIN_TOKENS` (150) tokens and none of the rule-based checks caught anything ie there might be subtler issues.
 - **Plain functions, not a class:** originally tried wrapping everything in a `@dataclass class Auditor` with methods... reverted this. None of the functions need shared state (so no `self.something` is used across calls), thus plain top-level functions are simpler and match how the orchestrator will call this file later (`from agents.auditor import auditPrompt`).
 - **`AuditResult` is a separate dataclass, data only:** keeps the "what data comes back" separate from "how it's calculated". Overall its just cleaner to reason about and test.
 - **Token counting is shared, not owned by Agent 1:** `countTokens()` used to live here. It moved to `tokens.py` so Agents 1 and 2 count the same way for the same target, and the result is cached between them.
@@ -67,7 +67,7 @@ The spaCy checks need the English model: `pip install -r requirements.txt` then 
 - **More rule-based issues means fewer LLM reviews:** the LLM review only runs when no rule-based issue was found, and the new checks find more of them
 - **Deployment size:** spaCy and its small English model add roughly 100 MB to the Docker image
 - **The token-to-word ratio check also fires on code, URLs and non-English text**, which naturally have more tokens per word. Those are the prompts the Optimizer should touch least
-- **Short wordy prompts are never optimized:** under 500 tokens the LLM review doesn't run, so a prompt with fewer than 3 filler hits gets no issues and the pipeline returns it as-is
+- ~~**Short wordy prompts are never optimized:** under 500 tokens the LLM review doesn't run, so a prompt with fewer than 3 filler hits gets no issues and the pipeline returns it as-is~~ **Fixed (10/27).** The filler check now estimates how many tokens a rewrite could cut (`estimateRemovableTokens()`): politeness *phrases* ("could you kindly help me", "thank you so much", "I was wondering if") and filler words, outside code blocks and optional sentences, counted locally with `o200k_base`. A prompt is flagged at 5 removable tokens, or at 15% of the prompt with at least 3, and the issue names the spans so the Optimizer knows what to cut. The dragon prompt now flags 11 of 20 tokens; "Please explain TCP vs UDP" (1 token) still isn't flagged. The LLM review now starts at 150 tokens instead of 500. The thresholds are guesses, to tune on real prompts
 - ~~**`llmReview()` turns every non-empty line of the reply into an issue**, including a preamble line like "Here are the issues:". It still uses `claude-sonnet-4-6`~~ **Fixed (10/14).** The reply comes back as a list through the `report_issues` tool, and the review uses `claude-haiku-5-5`
 - `severity` is computed but nothing in the pipeline uses it yet
 
@@ -413,7 +413,7 @@ Pass `target="claude"` to count with Claude's tokenizer.
 
 ### Design decisions
 
-- **Skip Agents 2 and 3 when Agent 1 finds nothing:** same "don't waste tokens to save tokens" idea as Agent 1. A clean prompt costs no LLM calls (unless it is over 500 tokens, where Agent 1 runs its own LLM review).
+- **Skip Agents 2 and 3 when Agent 1 finds nothing:** same "don't waste tokens to save tokens" idea as Agent 1. A clean prompt costs no LLM calls (unless it has 150+ tokens, where Agent 1 runs its own LLM review).
 - **The original is returned when nothing passes:** a rewrite that Agent 3 rejected is never returned, even if it saves tokens. Getting the same result for more tokens is better than a different result for fewer.
 - **Retries include the rejected rewrite and the Validator's reason:** each failed attempt is passed to Agent 2 as a `RejectedAttempt(rewrite, reason)`, and every earlier rejection is sent, not just the latest. The next attempt sees exactly what it wrote and what that broke. (Before 10/2 only the reason was passed, as one more line in the issue list.)
 - **The target is forwarded to Agents 1 and 2:** both count with the same tokenizer, so the audit's token count and the reported savings are consistent. Agent 3 doesn't count tokens, so it doesn't take a target.
@@ -438,7 +438,7 @@ Pass `target="claude"` to count with Claude's tokenizer.
 - **`.env` is not loaded:** none of the agents call `load_dotenv()`, so the key has to be exported in the shell. Without it the first Claude call fails with "Could not resolve authentication method"
 - **A failed optimization costs more than it could save:** 3 attempts are 6 LLM calls (7 if Agent 1 ran its LLM review), all in sequence before the user gets an answer. `MAX_OPTIMIZATION_ATTEMPTS = 3` is a guess and should be tuned on real prompts
 - **No minimum saving:** only a rewrite that saves 0 tokens is skipped. One that saves 1 or 2 tokens still costs a Validator call and is offered to the user
-- **Whether to optimize depends only on Agent 1's rule checks for prompts under 500 tokens:** e.g. `"Please, could you kindly help me write a short story about a dragon? Thank you so much!"` has 2 filler hits (the threshold is 3), so no issue is flagged and the prompt is returned as-is
+- ~~**Whether to optimize depends only on Agent 1's rule checks for prompts under 500 tokens:** e.g. the dragon prompt has 2 filler hits (the threshold is 3), so no issue is flagged and the prompt is returned as-is~~ **Fixed (10/27)**, see Agent 1's limitations: the Auditor now estimates removable tokens, and the LLM review starts at 150 tokens
 - **No cost on the result:** the docstring mentions cost savings, but `OrchestrationResult` only has `tokensSaved` and `percentSaved`
 - **The rewrite is only kept for attempts that were validated:** a rewrite dropped for saving no tokens is not recorded in `attempts`
 - `import os` and `OptimizationResult` are imported but not used
@@ -535,7 +535,7 @@ Missing slots depend on the task (`intent.py`): fix needs the input and what goe
 - **System prompt:** new rules say to keep options ("maybe add tests") and to keep a vague prompt exactly as vague, never adding a length, number, audience or criterion
 - **Added numbers are rejected locally** (`locks.py`): "a short story" → "a 500-word story" is a guess, so it fails without a Validator call
 - **Options must stay optional** (`findDroppedOptions()`, run with the other local checks): "Maybe add tests" → "Add tests" or dropping it entirely is rejected. Options are also in the must-preserve list as "optional (keep it optional): ..."
-- **The Auditor doesn't count option words as filler:** "maybe" in "Maybe add tests" carries meaning, so it no longer pushes a prompt over the filler threshold
+- **The Auditor doesn't count option words as filler:** "maybe" in "Maybe add tests" carries meaning, so it isn't counted as removable
 - **Questions go to the user:** `OrchestrationResult.vagueness` (also in `backend/schema/orchestrator.py`) carries the questions for the extension to show. This is better than letting the Optimizer guess, and a clarification of ~10 tokens is cheaper than a retry
 
 ### To test: pytest tests/test_vagueness.py -v
