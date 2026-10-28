@@ -77,6 +77,13 @@ User types a prompt
 
 A free, local check (`agents/locks.py`) that runs between the Optimizer and the Validator. It finds what a rewrite must keep: code blocks, inline code, URLs, rules (sentences with *must*, *never*, *always*, *do not*...) and numbered steps, and rejects any rewrite that drops or changes one, without paying for a Validator call. The exact reasons (e.g. `constraint dropped: "Always use parameterized queries..."`) go back to the Optimizer for its next attempt. A rule may be shortened (the explanation after "to prevent" or "because" can go), but negative rules must stay negative.
 
+### The Local Rewrite
+
+Two free shortcuts in `agents/local_rewrite.py` cut the pipeline's own API calls:
+
+- **Rule-based rewrite.** When the Auditor flags politeness and filler, it's deleted locally ("Please, could you kindly write a story? Thanks!" becomes "Write a story."). If the rewrite passes the lock check and the rule checks find nothing else, it's returned without calling the Optimizer or the Validator.
+- **Filler-only edits skip the Validator.** If an Optimizer rewrite only deleted politeness and filler (same words, same order, nothing reworded), it can't have changed the request, so no Validator call is made.
+
 ### The Orchestrator
 
 A lightweight pipeline controller (`agents/orchestrator.py`) that sequences the agents, runs the lock check, passes rejection reasons back to the Optimizer, and returns the original prompt if no rewrite passes within the retry limit.
@@ -99,6 +106,7 @@ TokenWatching/
 │   ├── optimizer.py            # Agent 2: rewrites the prompt to cut tokens, reports tokens/percent saved
 │   ├── validator.py            # Agent 3: ReAcT-structured check that the rewrite preserves intent (score 1-10, pass/fail)
 │   ├── locks.py                # Local lock check: rejects rewrites that drop code, URLs, rules or steps
+│   ├── local_rewrite.py        # Free rewrite that deletes politeness/filler, and the filler-only check that skips the Validator
 │   ├── orchestrator.py         # runPipeline(): Auditor → Optimizer → lock check → Validator, with retries
 │   ├── tokens.py               # Shared token counting per target LLM (tiktoken / Claude count_tokens)
 │   ├── testing_agent.py        # Scratch script for testing the Anthropic API connection

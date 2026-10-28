@@ -14,6 +14,8 @@ from agents.auditor import AuditResult
 from agents.optimizer import OptimizationResult, RejectedAttempt
 from agents.validator import ValidationResult
 from agents.prompt_types import PROFILES
+#The real local rewrite and filler check, for the tests that turn them back on
+from agents.local_rewrite import localRewrite as realLocalRewrite, isFillerOnlyEdit as realIsFillerOnlyEdit
 
 PROMPT = "Please, could you kindly write a short story about a dragon? Thank you so much!"
 REWRITE = "Write a short story about a dragon."
@@ -78,6 +80,10 @@ def fakeAgents(monkeypatch):
         monkeypatch.setattr(orchestrator, "auditPrompt", fake.auditPrompt)
         monkeypatch.setattr(orchestrator, "optimizePrompt", fake.optimizePrompt)
         monkeypatch.setattr(orchestrator, "validatePrompt", fake.validatePrompt)
+        #The local fast path and the Validator skip are off here, so these tests cover the LLM path.
+        #They have their own tests below
+        monkeypatch.setattr(orchestrator, "localRewrite", lambda *args, **kwargs: None)
+        monkeypatch.setattr(orchestrator, "isFillerOnlyEdit", lambda original, rewrite: False)
         return fake
     return install
 
@@ -387,3 +393,43 @@ def test_runPipeline_type_without_optimize_skips_optimizer(fakeAgents, monkeypat
     assert fake.optimizerCalls == []
     assert result.finalPrompt == CHAT_PROMPT
     assert result.wasOptimized is False
+
+#When deleting filler fixes everything, the local rewrite is returned without calling Agent 2 or 3
+def test_runPipeline_local_rewrite_skips_optimizer_and_validator(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.optimizerCalls == []
+    assert fake.validatorCalls == []
+    assert result.wasOptimized is True
+    assert result.finalPrompt == REWRITE
+    assert result.tokensSaved > 0
+    assert len(result.attempts) == 1 and result.attempts[0].passed
+
+#A type that may not be optimized never gets the local rewrite either
+def test_runPipeline_local_rewrite_respects_optimize_false(fakeAgents, monkeypatch):
+    for promptType, profile in list(PROFILES.items()):
+        monkeypatch.setitem(PROFILES, promptType, replace(profile, optimize=False))
+    fakeAgents(issues=["filler"])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline(PROMPT)
+    assert result.wasOptimized is False
+
+#An Optimizer rewrite that only deleted filler passes without a Validator call
+def test_runPipeline_filler_only_rewrite_skips_validator(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)])
+    monkeypatch.setattr(orchestrator, "isFillerOnlyEdit", realIsFillerOnlyEdit)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.validatorCalls == []
+    assert result.finalPrompt == REWRITE
+    assert result.attempts[0].passed
+
+#A rewrite that rewords anything still goes to the Validator
+def test_runPipeline_reworded_rewrite_is_validated(fakeAgents, monkeypatch):
+    reworded = "Write a brief dragon story."
+    fake = fakeAgents(issues=["filler"], rewrites=[(reworded, 12)], verdicts=[(True, "Fine.")])
+    monkeypatch.setattr(orchestrator, "isFillerOnlyEdit", realIsFillerOnlyEdit)
+    orchestrator.runPipeline(PROMPT)
+    assert fake.validatorCalls == [reworded]

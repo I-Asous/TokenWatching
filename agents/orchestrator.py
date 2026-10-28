@@ -9,6 +9,7 @@ from agents.auditor import auditPrompt, AuditResult
 from agents.optimizer import optimizePrompt, findRewriteProblems, OptimizationResult, RejectedAttempt
 from agents.validator import validatePrompt, ValidationResult
 from agents.locks import extractLocks
+from agents.local_rewrite import localRewrite, isFillerOnlyEdit
 from agents.intent import detectIntent, describeIntent
 from agents.vagueness import findVagueness, findOptionalMarkers, VaguenessReport
 from agents.prompt_types import detectPromptTypes, combineProfiles, DEFAULT_TYPE
@@ -65,6 +66,39 @@ def buildMustPreserve(prompt: str) -> list[str]:
     return items
 
 """
+* @brief The pass recorded for a rewrite that only deleted politeness and filler (isFillerOnlyEdit).
+* @post
+* 1. Nothing the prompt asks for was removed or reworded, so no Validator call is made.
+* 2. It's saved like any other validation, so the run's history shows why the Validator wasn't called.
+"""
+def fillerOnlyValidation(prompt: str, rewrite: str) -> ValidationResult:
+    return ValidationResult(
+        originalPrompt=prompt,
+        optimizedPrompt=rewrite,
+        qualityScore=10,
+        passed=True,
+        reasoning="Only politeness and filler were deleted, nothing was reworded.",
+        reactTrace="Deletion-only edit checked locally, Validator not called.",
+    )
+
+#The result for a rewrite that passed, from the Optimizer or the local fast path
+def acceptedResult(prompt: str, optimizationResult: OptimizationResult, auditResult: AuditResult,
+                   attempts: list[ValidationResult], vagueness: VaguenessReport,
+                   promptTypes: list[str]) -> OrchestrationResult:
+    return OrchestrationResult(
+        originalPrompt=prompt,
+        finalPrompt=optimizationResult.optimizedPrompt,
+        wasOptimized=True,
+        auditResult=auditResult,
+        attempts=attempts,
+        tokensSaved=optimizationResult.tokensSaved,
+        percentSaved=optimizationResult.percentSaved,
+        changes=optimizationResult.changes,
+        vagueness=vagueness,
+        promptTypes=promptTypes,
+    )
+
+"""
 * @brief Runs the full Auditor -> Optimizer -> Validator pipeline on a
 * single prompt then retrying the Optimizer with the rejected rewrite and the
 * Validator's reason if a rewrite fails validation, and falling back to the original
@@ -80,6 +114,8 @@ def buildMustPreserve(prompt: str) -> list[str]:
 *    A type with optimize=False skips optimization.
 * 1. The Auditor runs first; if it finds no issues, optimization is
 *    skipped entirely and the original prompt is returned unchanged.
+* 1b. If deleting the prompt's politeness and filler fixes everything the rule checks found
+*    (local_rewrite.py), that rewrite is returned with no Optimizer or Validator call.
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues, the type's rules and the list of what this prompt must keep (buildMustPreserve),
 *    plus, on retries, every earlier rewrite the Validator rejected along with its reason.
@@ -89,7 +125,8 @@ def buildMustPreserve(prompt: str) -> list[str]:
 *    options), as a safety net. If anything is broken,
 *    the attempt fails without a Validator call and those reasons are
 *    passed back to the Optimizer. Otherwise the Validator checks the rewrite
-*    against the original prompt, with the type's rules and pass score.
+*    against the original prompt, with the type's rules and pass score, unless the rewrite
+*    only deleted politeness and filler (isFillerOnlyEdit), which passes without a Validator call.
 * 4. If it passes, that rewrite becomes the final prompt and the loop
 *    stops immediately NO wasted extra calls.
 * 5. If it fails, the Optimizer is retried (up to
@@ -134,7 +171,19 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         )
         hook.finishJob(orchestrationResult)
         return orchestrationResult
- 
+
+    #Free fast path: when deleting politeness and filler fixes everything the rule checks found,
+    #the rewrite is made locally and neither the Optimizer nor the Validator is called
+    localResult = localRewrite(prompt, target, profile.skipChecks)
+    if localResult:
+        hook.updateStage("optimizing")
+        hook.saveOptimization(localResult)
+        localValidation = fillerOnlyValidation(prompt, localResult.optimizedPrompt)
+        hook.saveValidation(localValidation)
+        orchestrationResult = acceptedResult(prompt, localResult, auditResult, [localValidation], vagueness, promptTypes)
+        hook.finishJob(orchestrationResult)
+        return orchestrationResult
+
     attempts: list[ValidationResult] = []
     rejectedAttempts: list[RejectedAttempt] = []
     mustPreserve = buildMustPreserve(prompt)
@@ -179,32 +228,25 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
             hook.saveValidation(brokenLockValidation)
             continue
 
-        #An unvalidated rewrite is never sent, so a failed Validator call falls back to the original
-        try:
-            validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt,
-                                              passScore=profile.passScore,
-                                              typeRules=profile.optimizerRules)
-        except APIError as apiError:
-            error = f"Validator call failed: {apiError}"
-            logger.warning("%s, returning the original prompt", error)
-            break
+        #A rewrite that only deleted politeness and filler can't have changed the request, so it skips the
+        #Validator. Anything else is validated: an unvalidated rewrite is never sent, so a failed call falls back
+        if isFillerOnlyEdit(prompt, optimizationResult.optimizedPrompt):
+            validationResult = fillerOnlyValidation(prompt, optimizationResult.optimizedPrompt)
+        else:
+            try:
+                validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt,
+                                                  passScore=profile.passScore,
+                                                  typeRules=profile.optimizerRules)
+            except APIError as apiError:
+                error = f"Validator call failed: {apiError}"
+                logger.warning("%s, returning the original prompt", error)
+                break
         hook.saveValidation(validationResult)
 
         attempts.append(validationResult)
- 
+
         if validationResult.passed:
-            orchestrationResult = OrchestrationResult(
-                originalPrompt=prompt,
-                finalPrompt=optimizationResult.optimizedPrompt,
-                wasOptimized=True,
-                auditResult=auditResult,
-                attempts=attempts,
-                tokensSaved=optimizationResult.tokensSaved,
-                percentSaved=optimizationResult.percentSaved,
-                changes=optimizationResult.changes,
-                vagueness=vagueness,
-                promptTypes=promptTypes,
-            )
+            orchestrationResult = acceptedResult(prompt, optimizationResult, auditResult, attempts, vagueness, promptTypes)
             hook.finishJob(orchestrationResult)
 
             return orchestrationResult
