@@ -9,3 +9,6 @@ class AuditIssue(BaseModel):
 class AuditIssueCreate(BaseModel):
     audit_id: int
     issue_type: str = Field(min_length=1)
+
+class AuditIssueInsert(AuditIssueCreate):
+    user_id: str
