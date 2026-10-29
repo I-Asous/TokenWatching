@@ -36,6 +36,30 @@ def test_deleteFiller_keeps_options_and_meaningful_words():
     rewrite, _ = deleteFiller("Please write the best intro you can. Maybe add a quote. Thanks!")
     assert rewrite == "Write the best intro you can. Maybe add a quote."
 
+#Quoted text is the user's material: its "Please" and "thank you" are part of what to translate
+def test_deleteFiller_leaves_quoted_text_alone():
+    rewrite, _ = deleteFiller('Hi! Could you please translate the sign "Please do not touch, thank you" into French? Thanks!')
+    assert rewrite == 'Translate the sign "Please do not touch, thank you" into French.'
+
+@pytest.mark.parametrize("prompt, kept", [
+    ("Please don't just list the bugs, fix them. Thanks!", "Don't just list the bugs, fix them."),
+    ("Please write a summary, not just a list. Thanks!", "Write a summary, not just a list."),
+    ("Please keep it short, I don't really need examples. Thanks!", "Keep it short, I don't really need examples."),
+])
+#"just" and "really" after a negation carry the meaning, so they're kept
+def test_deleteFiller_keeps_filler_after_negation(prompt, kept):
+    assert deleteFiller(prompt)[0] == kept
+
+#"Could you please help me with this?" leaves only "this": a fragment, so nothing is rewritten locally
+def test_deleteFiller_refuses_to_leave_a_fragment():
+    prompt = "Hi there! Could you please help me with this? Don't just list the bugs in my code, fix them. Thanks so much!"
+    assert deleteFiller(prompt)[0] == ""
+    assert localRewrite(prompt) is None
+
+#Dropping a "just" that follows a negation isn't filler-only, so the Validator still checks it
+def test_isFillerOnlyEdit_rejects_dropped_word_after_negation():
+    assert not isFillerOnlyEdit("Please don't just list the bugs, fix them.", "Don't list the bugs, fix them.")
+
 #A prompt that's mostly politeness is rewritten locally, with the deleted spans as its change
 def test_localRewrite_rewrites_filler_heavy_prompt():
     result = localRewrite("Please, could you kindly write a short story about a dragon? Thank you so much!")

@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from spacy.lang.en.stop_words import STOP_WORDS
 from agents.auditor import POLITENESS_RE, MAX_SPANS_SHOWN, maskProtected, findRemovableFiller, runRuleCheck
 from agents.optimizer import OptimizationResult, findRewriteProblems
 from agents.tokens import countTokens, DEFAULT_TARGET
@@ -8,6 +9,8 @@ from agents.tokens import countTokens, DEFAULT_TARGET
 #carry meaning ("best", "perfect", "somewhat", "maybe"), which it only counts, so they're left to the Optimizer
 DELETABLE_FILLER = ["please", "thank you", "really", "basically", "essentially", "literally", "just"]
 DELETABLE_FILLER_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, DELETABLE_FILLER)) + r")\b", re.IGNORECASE)
+#After a negation these words carry the meaning: "Don't just list the bugs" -> "Don't list the bugs" flips it
+NEGATION_BEFORE_RE = re.compile(r"(?:\b(?:not|never|no)|n't)\s+$", re.IGNORECASE)
 
 #A sentence ends after .!? followed by whitespace, or at a newline. Only sentences with a deletion are tidied,
 #every other one is kept byte for byte
@@ -28,14 +31,17 @@ class Deletion:
 * @brief Finds the politeness and filler a rewrite can delete without an LLM.
 * @post
 * 1. Politeness phrases (the Auditor's POLITENESS_PATTERNS) and DELETABLE_FILLER words are matched outside
-*    code blocks and optional sentences (maskProtected), so code and "Maybe add tests." are never touched.
-* 2. Overlapping matches are merged, and whitespace at either end of a match is left in the text.
-* 3. Returns the deletions in order, as offsets into text.
+*    code blocks, quoted text and optional sentences (maskProtected), so code, quotes and "Maybe add tests."
+*    are never touched.
+* 2. A filler word right after a negation ("not just", "don't really") is kept, since it carries the meaning.
+* 3. Overlapping matches are merged, and whitespace at either end of a match is left in the text.
+* 4. Returns the deletions in order, as offsets into text.
 """
 def findDeletions(text: str) -> list[Deletion]:
     masked = maskProtected(text.replace("’", "'"))
     ranges = sorted((match.start(), match.end()) for pattern in (POLITENESS_RE, DELETABLE_FILLER_RE)
-                    for match in pattern.finditer(masked) if match.group(0).strip())
+                    for match in pattern.finditer(masked) if match.group(0).strip()
+                    and not (pattern is DELETABLE_FILLER_RE and NEGATION_BEFORE_RE.search(masked, 0, match.start())))
     merged: list[list[int]] = []
     for start, end in ranges:
         while start < end and text[start].isspace():
@@ -59,11 +65,13 @@ def sentenceRanges(text: str) -> list[tuple[int, int]]:
 * 1. The spans are cut, then doubled spaces, spaces before punctuation, commas left before the end and
 *    punctuation left at the start are removed.
 * 2. A sentence with no words left ("Thanks!") is dropped along with its leading whitespace.
-* 3. If the cut was at the start, the first letter is capitalized, and a "?" ending becomes "." unless
+* 3. A sentence left with only stop words ("Could you please help me with this?" -> "this?") is a fragment,
+*    not a request, so None is returned and the caller leaves the prompt to the Optimizer.
+* 4. If the cut was at the start, the first letter is capitalized, and a "?" ending becomes "." unless
 *    the sentence still starts like a question ("Could you write a poem?" -> "Write a poem.").
-* 4. Whitespace around the sentence is kept, so the lines and paragraphs around it don't move.
+* 5. Whitespace around the sentence is kept, so the lines and paragraphs around it don't move.
 """
-def tidySentence(sentence: str, spans: list[tuple[int, int]]) -> str:
+def tidySentence(sentence: str, spans: list[tuple[int, int]]) -> str | None:
     leading = sentence[:len(sentence) - len(sentence.lstrip())]
     trailing = sentence[len(sentence.rstrip()):]
     cutAtStart = spans[0][0] <= len(leading)
@@ -76,8 +84,11 @@ def tidySentence(sentence: str, spans: list[tuple[int, int]]) -> str:
     core = re.sub(r"[,;:](?:\s*([,;:]))+", r"\1", core)
     core = re.sub(r"[,;]+(?=[.!?:]|$)", "", core)
     core = re.sub(r"^[\s,.!?;:]+", "", core)
-    if not WORD_RE.search(core):
+    words = WORD_RE.findall(core)
+    if not words:
         return trailing if "\n" in trailing else ""
+    if all(word.lower() in STOP_WORDS for word in words):
+        return None
 
     if cutAtStart:
         core = core[0].upper() + core[1:]
@@ -92,15 +103,21 @@ def tidySentence(sentence: str, spans: list[tuple[int, int]]) -> str:
 * 1. Each deletion belongs to the sentence it starts in (clipped to that sentence's end).
 * 2. Sentences without a deletion are copied exactly; the others go through tidySentence.
 * 3. The result is stripped and returned, with the deleted spans as text for the changes list.
+* 4. If any sentence is left as a fragment (tidySentence returns None), the rewrite is "" so the caller
+*    doesn't use it.
 """
 def deleteFiller(text: str) -> tuple[str, list[str]]:
     deletions = findDeletions(text)
+    deleted = [text[deletion.start:deletion.end] for deletion in deletions]
     parts = []
     for start, end in sentenceRanges(text):
         spans = [(max(deletion.start, start) - start, min(deletion.end, end) - start)
                  for deletion in deletions if start <= deletion.start < end]
-        parts.append(tidySentence(text[start:end], spans) if spans else text[start:end])
-    return "".join(parts).strip(), [text[deletion.start:deletion.end] for deletion in deletions]
+        part = tidySentence(text[start:end], spans) if spans else text[start:end]
+        if part is None:
+            return "", deleted
+        parts.append(part)
+    return "".join(parts).strip(), deleted
 
 """
 * @brief Rewrites a prompt without an LLM, when deleting its politeness and filler is all it needs.
