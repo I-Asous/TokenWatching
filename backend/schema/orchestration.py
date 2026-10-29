@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from schema.context import ContextIn
+
 class Orchestration(BaseModel):
     run_id: int
     user_id: str
@@ -30,3 +32,4 @@ class OrchestrationInsert(OrchestrationCreate):
 class OrchestrationRequest(BaseModel):
     prompt: str = Field(min_length=1)
     target: str
+    context: list[ContextIn] = []
