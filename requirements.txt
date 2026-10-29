@@ -8,4 +8,4 @@ fastapi[standard]==0.142.2
 supabase==2.31.0
 email-validator
 pyjwt[crypto]
-preshed<3.0.14
+preshed<3.0.16
