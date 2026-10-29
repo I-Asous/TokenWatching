@@ -11,6 +11,7 @@ except ImportError:
     import httpx
 from anthropic import APIConnectionError
 from agents import optimizer
+from agents import tokens as optimizer_tokens
 from agents.optimizer import OptimizationResult, Rewrite, RejectedAttempt
 
 
@@ -333,6 +334,17 @@ def test_check_rewrite_reports_problems():
     report = optimizer.describeCheck("Write a bio in under 300 words.", "Write a bio.", "chatgpt")
     assert report.startswith("Problems:\n- ")
     assert "300" in report
+
+#With a Claude target, the loop's token counts are local estimates: checking drafts never calls count_tokens
+def test_tools_estimate_claude_tokens_without_api(monkeypatch):
+    def failCount(_text):
+        raise AssertionError("count_tokens API called inside the optimizer loop")
+    monkeypatch.setattr(optimizer_tokens, "countClaudeMessage", failCount)
+    prompt = "Could you please write a bio for our CEO in under 300 words? Thanks!"
+    report = optimizer.describeCheck(prompt, "Write a CEO bio in under 300 words.", "claude")
+    assert f"original {optimizer_tokens.estimateTokens(prompt, 'claude')}" in report
+    content, isError, _ = optimizer.runTool("count_tokens", {"text": "A brand new draft."}, prompt, "claude")
+    assert content == f"{optimizer_tokens.estimateTokens('A brand new draft.', 'claude')} tokens" and isError is False
 
 #A submission that drops a lock is refused with the reasons, and the fixed one is accepted
 def test_callOptimizerLLM_refuses_broken_submission(fakeClient):

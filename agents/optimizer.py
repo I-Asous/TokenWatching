@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from anthropic import Anthropic
 from pydantic import BaseModel, Field, ValidationError
 from agents.auditor import estimateCost
-from agents.tokens import countTokens, DEFAULT_TARGET
+from agents.tokens import countTokens, estimateTokens, DEFAULT_TARGET
 from agents.locks import findBrokenLocks
 from agents.intent import findIntentChanges
 from agents.vagueness import findDroppedOptions
@@ -61,8 +61,8 @@ SUBMIT_TOOL = "submit_rewrite"
 OPTIMIZER_TOOLS = [
     {
         "name": "count_tokens",
-        "description": ("Counts the tokens in some text with the tokenizer of the model the person "
-                        "is prompting. Use it to see whether a cut actually saves tokens."),
+        "description": ("Counts the tokens in some text as the model the person is prompting would "
+                        "(a close estimate for Claude). Use it to see whether a cut actually saves tokens."),
         "input_schema": {
             "type": "object",
             "properties": {"text": {"type": "string", "description": "The text to count."}},
@@ -299,11 +299,12 @@ def findRewriteProblems(original: str, rewrite: str) -> list[str]:
 * @brief Runs the check_rewrite tool and describes the result for the model.
 * @post
 * 1. Every problem findRewriteProblems finds is listed, or "No problems found."
-* 2. The token counts of the original and the draft are added, with the target's tokenizer.
+* 2. The token counts of the original and the draft are added, estimated locally (estimateTokens), so
+*    checking a draft never makes an API call. Both use the same estimate, so the comparison holds.
 """
 def describeCheck(prompt: str, rewrite: str, target: str) -> str:
     problems = findRewriteProblems(prompt, rewrite)
-    tokens = f"Tokens: original {countTokens(prompt, target)}, rewrite {countTokens(rewrite, target)}."
+    tokens = f"Tokens: original {estimateTokens(prompt, target)}, rewrite {estimateTokens(rewrite, target)}."
     if not problems:
         return f"No problems found. {tokens}"
     return "Problems:\n" + "\n".join(f"- {problem}" for problem in problems) + f"\n{tokens}"
@@ -311,7 +312,8 @@ def describeCheck(prompt: str, rewrite: str, target: str) -> str:
 """
 * @brief Runs one tool call from the optimizer LLM.
 * @post
-* 1. count_tokens returns the text's token count with the target's tokenizer.
+* 1. count_tokens returns the text's token count, estimated locally for the target (estimateTokens).
+*    Only the final rewrite is counted exactly, in optimizePrompt.
 * 2. check_rewrite returns describeCheck's report on the draft.
 * 3. submit_rewrite validates the input against the Rewrite schema, strips the
 *    rewrite and, unless it's marked unchanged, refuses it if findRewriteProblems finds
@@ -321,7 +323,7 @@ def describeCheck(prompt: str, rewrite: str, target: str) -> str:
 """
 def runTool(name: str, toolInput: dict, prompt: str, target: str) -> tuple[str, bool, Rewrite | None]:
     if name == "count_tokens":
-        return f"{countTokens(toolInput['text'], target)} tokens", False, None
+        return f"{estimateTokens(toolInput['text'], target)} tokens", False, None
     if name == "check_rewrite":
         return describeCheck(prompt, toolInput["rewrite"], target), False, None
     if name == SUBMIT_TOOL:

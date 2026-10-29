@@ -32,11 +32,11 @@ class FakeMessages:
 #Every test starts with empty caches --> counts from one test can't leak in nother
 @pytest.fixture(autouse=True)
 def clearCaches():
-    tokens.countTokens.cache_clear()
-    tokens.claudeMessageOverhead.cache_clear()
+    for cached in (tokens.countTokens, tokens.estimateTokens, tokens.claudeMessageOverhead):
+        cached.cache_clear()
     yield
-    tokens.countTokens.cache_clear()
-    tokens.claudeMessageOverhead.cache_clear()
+    for cached in (tokens.countTokens, tokens.estimateTokens, tokens.claudeMessageOverhead):
+        cached.cache_clear()
 
 
 @pytest.fixture
@@ -74,12 +74,34 @@ def test_countTokens_claude_is_cached(fakeClient):
     tokens.countTokens("Write a poem", tokens.CLAUDE)
     assert len(messages.calls) == callsAfterFirst
 
-#count_tokens fails so local o200k_base count is used instead of crashing EVERYTHING
+#count_tokens fails so the local estimate is used instead of crashing EVERYTHING
 def test_countTokens_claude_falls_back_on_api_error(fakeClient):
     fakeClient(fail=True)
     text = "Write a short story about a dragon."
-    expected = len(tokens.tiktoken.get_encoding("o200k_base").encode(text))
-    assert tokens.countTokens(text, tokens.CLAUDE) == expected
+    assert tokens.countTokens(text, tokens.CLAUDE) == tokens.estimateTokens(text, tokens.CLAUDE)
+
+#ChatGPT estimates are exact, the same o200k_base count as countTokens
+def test_estimateTokens_chatgpt_is_exact():
+    text = "Write a short story about a dragon."
+    assert tokens.estimateTokens(text, tokens.CHATGPT) == tokens.countTokens(text, tokens.CHATGPT)
+
+#Claude estimates scale the local count by CLAUDE_TOKEN_RATIO and never call the API
+def test_estimateTokens_claude_scales_local_count_without_api(fakeClient, monkeypatch):
+    messages = fakeClient()
+    monkeypatch.setattr(tokens, "CLAUDE_TOKEN_RATIO", 1.5)
+    text = "Write a short story about a dragon."
+    assert tokens.estimateTokens(text, tokens.CLAUDE) == round(tokens.localTokenCount(text) * 1.5)
+    assert tokens.estimateTokens("", tokens.CLAUDE) == 0
+    assert messages.calls == []
+
+#A one-token text never rounds down to 0 tokens
+def test_estimateTokens_claude_is_at_least_one(monkeypatch):
+    monkeypatch.setattr(tokens, "CLAUDE_TOKEN_RATIO", 0.1)
+    assert tokens.estimateTokens("hi", tokens.CLAUDE) == 1
+
+def test_estimateTokens_unknown_target():
+    with pytest.raises(ValueError):
+        tokens.estimateTokens("hi", "gemini")
 
 #unknown target is rejected
 def test_countTokens_unknown_target():
