@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
+import { useApi } from "../api";
 
 type ChatTurn = {
   id: number;
   prompt: string;
   result: string | null;
+  status: "processing" | "complete" | "error";
+  wasOptimized: boolean | null;
+};
+
+type OrchestrationResponse = {
+  finalPrompt: string;
+  wasOptimized: boolean;
 };
 
 const promptExamples = [
@@ -13,22 +21,14 @@ const promptExamples = [
   "Summarize these notes into three clear action items.",
 ];
 
-// The backend currently sends mock progress stages over its websocket.
-const STAGE_MESSAGES: Record<string, string> = {
-  auditing: "Calculating Cost...",
-  optimizing: "Cleaning Up...",
-  validating: "Double Checking...",
-  done: "Done!",
-};
-
 function Chatbox() {
+  const api = useApi();
   const [promptValue, setPromptValue] = useState("");
   const [promptExampleIndex, setPromptExampleIndex] = useState(0);
   const [showPromptExample, setShowPromptExample] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [sendMessage, setSendMessage] = useState("");
   const [sendError, setSendError] = useState("");
-  const [stage, setStage] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
 
   useEffect(() => {
@@ -75,52 +75,31 @@ function Chatbox() {
     setIsSending(true);
     setSendError("");
     setSendMessage("");
-    setStage("");
+    const turnId = Date.now();
+    setTurns((previousTurns) => [
+      ...previousTurns,
+      { id: turnId, prompt: txtPrompt, result: null, status: "processing", wasOptimized: null },
+    ]);
 
-    const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
     try {
-      const response = await fetch(`${apiBaseUrl}/prompts/guest-prompt`, {
+      const result = await api("/orchestrator", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ txt_prompt: txtPrompt }),
-      });
-      const responseData = await response.json().catch(() => ({}));
+        body: JSON.stringify({ prompt: txtPrompt, target: "chatgpt" }),
+      }) as OrchestrationResponse;
 
-      if (!response.ok) {
-        throw new Error(responseData.detail ?? `Backend request failed (${response.status}).`);
-      }
-
-      setTurns((previousTurns) => [
-        ...previousTurns,
-        { id: Date.now(), prompt: txtPrompt, result: null },
-      ]);
+      setTurns((previousTurns) => previousTurns.map((turn) =>
+        turn.id === turnId
+          ? { ...turn, result: result.finalPrompt, status: "complete", wasOptimized: result.wasOptimized }
+          : turn,
+      ));
       setPromptValue("");
-      setSendMessage("Prompt saved. Optimization results are not connected yet.");
+      setSendMessage("Result ready.");
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not reach the backend");
-      setIsSending(false);
-      return;
-    }
-
-    // Keep main's progress-stage UI. The current backend websocket sends mock stages.
-    try {
-      const socketUrl = `${apiBaseUrl.replace(/^http/, "ws")}/ws`;
-      const socket = new WebSocket(socketUrl);
-      socket.onmessage = (event) => {
-        try {
-          const progress = JSON.parse(event.data) as { stage?: string };
-          if (progress.stage) setStage(progress.stage);
-        } catch {
-          setSendError("Received an unreadable progress update.");
-        }
-      };
-      socket.onerror = () => {
-        setSendError("Prompt saved, but progress updates could not connect.");
-        setIsSending(false);
-      };
-      socket.onclose = () => setIsSending(false);
-    } catch {
-      setSendError("Prompt saved, but progress updates could not connect.");
+      setTurns((previousTurns) => previousTurns.map((turn) =>
+        turn.id === turnId ? { ...turn, status: "error" } : turn,
+      ));
+    } finally {
       setIsSending(false);
     }
   }
@@ -139,7 +118,16 @@ function Chatbox() {
               </div>
               <div className="chat-message result-message">
                 <span className="message-label">Result</span>
-                <p>{turn.result ?? "No optimized result yet."}</p>
+                {turn.status === "processing" && <p>Working on your prompt…</p>}
+                {turn.status === "error" && <p>Could not generate a result. You can try again.</p>}
+                {turn.status === "complete" && (
+                  <>
+                    <p>{turn.result}</p>
+                    <small>
+                      {turn.wasOptimized ? "Optimized prompt" : "No optimization was needed"}
+                    </small>
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -174,12 +162,6 @@ function Chatbox() {
           </button>
         </div>
         {sendMessage && <p role="status">{sendMessage}</p>}
-        {stage && (
-          <div className="progress" role="status">
-            {stage !== "done" && <span className="spinner" />}
-            {STAGE_MESSAGES[stage] ?? stage}
-          </div>
-        )}
         {sendError && <p role="alert">{sendError}</p>}
       </div>
     </div>
