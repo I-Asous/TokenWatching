@@ -42,7 +42,7 @@ def localTokenCount(text: str) -> int:
 *    call fails, estimateTokens is used instead.
 * 5. Results are cached, so counting the same prompt twice (Auditor then
 *    Optimizer) costs only one API call.
-* 6. Use this for counts the user sees. Counts that only compare drafts use estimateTokens.
+* 6. Use this for counts the user sees.
 """
 @lru_cache(maxsize=1024)
 def countTokens(text: str, target: str = DEFAULT_TARGET) -> int:
@@ -57,12 +57,11 @@ def countTokens(text: str, target: str = DEFAULT_TARGET) -> int:
     return estimateTokens(text, target)
 
 """
-* @brief Estimates tokens locally, for comparisons that run often and don't need the exact count.
+* @brief Estimates tokens locally, for when the exact count isn't available.
 * @post
 * 1. An unknown target raises a ValueError, and empty text is 0.
 * 2. ChatGPT counts are exact (o200k_base, same as countTokens).
 * 3. Claude counts are the o200k_base count times CLAUDE_TOKEN_RATIO (at least 1), with no API call.
-*    The ratio scales every text alike, so comparing a draft with the original still works.
 """
 @lru_cache(maxsize=1024)
 def estimateTokens(text: str, target: str = DEFAULT_TARGET) -> int:

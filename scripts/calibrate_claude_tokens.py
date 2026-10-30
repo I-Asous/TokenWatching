@@ -1,7 +1,7 @@
 """
 Measures CLAUDE_TOKEN_RATIO in agents/tokens.py: how many Claude tokens (from Anthropic's count_tokens
-endpoint) a prompt takes per o200k_base token. The Optimizer's tool loop uses this ratio to estimate
-Claude counts locally instead of calling count_tokens on every draft.
+endpoint) a prompt takes per o200k_base token. countTokens uses this ratio to estimate a Claude count
+locally when a count_tokens call fails.
 
 Calls count_tokens once per sample (free, but needs ANTHROPIC_API_KEY). Re-run it when
 CLAUDE_COUNT_MODEL changes, or with real prompts once there are some.

@@ -26,6 +26,12 @@ MAX_OPTIMIZATION_ATTEMPTS = 2
 #Lock kinds listed for the Optimizer up front. Code, URLs and steps are left out: the system prompt
 #already says to copy them exactly, and repeating a long code block would cost more than it saves
 PRESERVE_LOCK_KINDS = ("constraint", "number")
+#A prompt shorter than this rarely has MIN_TOKENS_SAVED to cut, so it isn't worth an Optimizer call. Tune on real runs
+MIN_TOKENS_FOR_OPTIMIZER = 15
+#A rewrite must save at least this many tokens and this share of the prompt to be worth a Validator call or a retry.
+#The share stays low because a long code block with a polite wrapper can save many tokens but few percent. Tune on real runs
+MIN_TOKENS_SAVED = 5
+MIN_PERCENT_SAVED = 2.0
 
 @dataclass
 class OrchestrationResult:
@@ -81,6 +87,18 @@ def fillerOnlyValidation(prompt: str, rewrite: str) -> ValidationResult:
         reactTrace="Deletion-only edit checked locally, Validator not called.",
     )
 
+#The result when no LLM rewrite was attempted, so the original is returned as is
+def skippedResult(prompt: str, auditResult: AuditResult, vagueness: VaguenessReport,
+                  promptTypes: list[str]) -> OrchestrationResult:
+    return OrchestrationResult(
+        originalPrompt=prompt,
+        finalPrompt=prompt,
+        wasOptimized=False,
+        auditResult=auditResult,
+        vagueness=vagueness,
+        promptTypes=promptTypes,
+    )
+
 #The result for a rewrite that passed, from the Optimizer or the local fast path
 def acceptedResult(prompt: str, optimizationResult: OptimizationResult, auditResult: AuditResult,
                    attempts: list[ValidationResult], vagueness: VaguenessReport,
@@ -116,10 +134,11 @@ def acceptedResult(prompt: str, optimizationResult: OptimizationResult, auditRes
 *    skipped entirely and the original prompt is returned unchanged.
 * 1b. If deleting the prompt's politeness and filler fixes everything the rule checks found
 *    (local_rewrite.py), that rewrite is returned with no Optimizer or Validator call.
+* 1c. A prompt under MIN_TOKENS_FOR_OPTIMIZER tokens is returned unchanged with no Optimizer call.
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues, the type's rules and the list of what this prompt must keep (buildMustPreserve),
 *    plus, on retries, every earlier rewrite the Validator rejected along with its reason.
-*    It drafts, checks and revises with tools on its own (see optimizer.py), and only
+*    It submits through a tool and revises after any refusal (see optimizer.py), and only
 *    returns a rewrite that passes the local checks below.
 * 3. The rewrite is checked locally again with findRewriteProblems (locks, tasks and
 *    options), as a safety net. If anything is broken,
@@ -134,7 +153,8 @@ def acceptedResult(prompt: str, optimizationResult: OptimizationResult, auditRes
 *    rewrite and the Validator's reasoning fed back in, so each retry
 *    sees exactly what it wrote and what that broke instead of
 *    repeating the same mistake.
-* 6. If a rewrite saves no tokens, the loop stops without validating it.
+* 6. If a rewrite saves under MIN_TOKENS_SAVED tokens or MIN_PERCENT_SAVED of the prompt, the
+*    loop stops without validating or retrying it.
 * 7. If no attempt passes, the original prompt is returned unchanged,
 *    a rewrite the Validator rejected is never sent, even if it would
 *    have saved tokens. The same goes for a failed Optimizer or Validator API call
@@ -161,14 +181,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
     vagueness = findVagueness(prompt)
 
     if not auditResult.issues or not profile.optimize:
-        orchestrationResult = OrchestrationResult(
-            originalPrompt=prompt,
-            finalPrompt=prompt,
-            wasOptimized=False,
-            auditResult=auditResult,
-            vagueness=vagueness,
-            promptTypes=promptTypes,
-        )
+        orchestrationResult = skippedResult(prompt, auditResult, vagueness, promptTypes)
         hook.finishJob(orchestrationResult)
         return orchestrationResult
 
@@ -181,6 +194,11 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         localValidation = fillerOnlyValidation(prompt, localResult.optimizedPrompt)
         hook.saveValidation(localValidation)
         orchestrationResult = acceptedResult(prompt, localResult, auditResult, [localValidation], vagueness, promptTypes)
+        hook.finishJob(orchestrationResult)
+        return orchestrationResult
+
+    if auditResult.token_count < MIN_TOKENS_FOR_OPTIMIZER:
+        orchestrationResult = skippedResult(prompt, auditResult, vagueness, promptTypes)
         hook.finishJob(orchestrationResult)
         return orchestrationResult
 
@@ -202,8 +220,8 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
             break
         hook.saveOptimization(optimizationResult)
 
-        #A rewrite that saves nothing (unchanged or longer) isn't worth a Validator call or a retry
-        if optimizationResult.tokensSaved == 0:
+        #A rewrite that saves little or nothing (unchanged or longer) isn't worth a Validator call or a retry
+        if optimizationResult.tokensSaved < MIN_TOKENS_SAVED or optimizationResult.percentSaved < MIN_PERCENT_SAVED:
             break
 
         hook.updateStage("validating")

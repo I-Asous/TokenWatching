@@ -350,6 +350,44 @@ def test_runPipeline_no_savings_returns_original(fakeAgents, rewrite):
     assert result.wasOptimized is False
     assert result.attempts == []
 
+#A rewrite under either minimum saving is not validated, retried or returned, and one at both minimums is validated
+@pytest.mark.parametrize("tokensSaved,percentSaved,validated", [(4, 50.0, False), (40, 1.9, False), (5, 2.0, True)])
+def test_runPipeline_minimum_saving(fakeAgents, monkeypatch, tokensSaved, percentSaved, validated):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, tokensSaved)], verdicts=[(True, "Fine.")])
+    realOptimize = fake.optimizePrompt
+    monkeypatch.setattr(orchestrator, "optimizePrompt",
+                        lambda *args, **kwargs: replace(realOptimize(*args, **kwargs), percentSaved=percentSaved))
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert len(fake.optimizerCalls) == 1
+    assert fake.validatorCalls == ([REWRITE] if validated else [])
+    assert result.wasOptimized is validated
+    assert result.finalPrompt == (REWRITE if validated else PROMPT)
+
+#A prompt too short to save much skips the Optimizer, but keeps its audit and vagueness report
+def test_runPipeline_short_prompt_skips_optimizer(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["High token to word ratio"])
+    monkeypatch.setattr(fake, "auditPrompt", lambda prompt, target, skipChecks=frozenset(): AuditResult(
+        token_count=orchestrator.MIN_TOKENS_FOR_OPTIMIZER - 1, estimatedCost=0.0, issues=fake.issues, severity="Medium"))
+    monkeypatch.setattr(orchestrator, "auditPrompt", fake.auditPrompt)
+    result = orchestrator.runPipeline("Make it better.")
+
+    assert fake.optimizerCalls == []
+    assert result.finalPrompt == "Make it better."
+    assert result.wasOptimized is False
+    assert result.auditResult.issues == fake.issues
+    assert result.vagueness.level == "vague"
+
+#A short prompt that deleting filler can fix still gets the free local rewrite
+def test_runPipeline_short_prompt_still_gets_local_rewrite(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"])
+    monkeypatch.setattr(orchestrator, "MIN_TOKENS_FOR_OPTIMIZER", 1000)
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.optimizerCalls == []
+    assert result.wasOptimized is True
+
 CHAT_PROMPT = "Hey, could you please suggest some fun weekend plans for me? Thanks so much!"
 CODE_PROMPT = "Hey, could you please fix this, thanks so much!\n```python\ndef add(a, b): return a - b\n```"
 CODE_REWRITE = "Fix this:\n```python\ndef add(a, b): return a - b\n```"

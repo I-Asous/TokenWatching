@@ -11,7 +11,6 @@ except ImportError:
     import httpx
 from anthropic import APIConnectionError
 from agents import optimizer
-from agents import tokens as optimizer_tokens
 from agents.optimizer import OptimizationResult, Rewrite, RejectedAttempt
 
 
@@ -304,6 +303,13 @@ def test_system_prompt_keeps_options_and_vagueness():
     assert "maybe add tests" in optimizer.OPTIMIZER_SYSTEM_PROMPT
     assert "keep it exactly as vague" in optimizer.OPTIMIZER_SYSTEM_PROMPT
 
+#Submitting is the only tool, so a clean rewrite takes one API call
+def test_submit_is_the_only_tool(fakeClient):
+    assert [tool["name"] for tool in optimizer.OPTIMIZER_TOOLS] == [optimizer.SUBMIT_TOOL]
+    messages = fakeClient("Write a poem.")
+    optimizer.callOptimizerLLM("Please write a poem.", [])
+    assert len(messages.requests) == 1
+
 #Every tool is strict, and submit_rewrite takes exactly the Rewrite fields
 def test_tools_are_strict():
     for tool in optimizer.OPTIMIZER_TOOLS:
@@ -311,40 +317,6 @@ def test_tools_are_strict():
         assert tool["input_schema"]["additionalProperties"] is False
     submit = next(t for t in optimizer.OPTIMIZER_TOOLS if t["name"] == optimizer.SUBMIT_TOOL)
     assert set(submit["input_schema"]["required"]) == set(Rewrite.model_fields)
-
-#The model can check a draft, see the result, and then submit it
-def test_callOptimizerLLM_check_then_submit(fakeClient):
-    rewrite = "Write a short story about a dragon."
-    messages = fakeClient([
-        [toolUse("check_rewrite", {"rewrite": rewrite})],
-        submitTurn(makeRewrite(rewrite), "toolu_2"),
-    ])
-    result = optimizer.callOptimizerLLM("Please, could you write a short story about a dragon? Thanks!", [])
-
-    assert result.optimizedPrompt == rewrite
-    assert len(messages.requests) == 2
-    [checkResult] = toolResults(messages, 1)
-    assert checkResult["tool_use_id"] == "toolu_1"
-    assert checkResult["is_error"] is False
-    assert checkResult["content"].startswith("No problems found.")
-    assert "Tokens: original" in checkResult["content"]
-
-#check_rewrite lists what a draft dropped
-def test_check_rewrite_reports_problems():
-    report = optimizer.describeCheck("Write a bio in under 300 words.", "Write a bio.", "chatgpt")
-    assert report.startswith("Problems:\n- ")
-    assert "300" in report
-
-#With a Claude target, the loop's token counts are local estimates: checking drafts never calls count_tokens
-def test_tools_estimate_claude_tokens_without_api(monkeypatch):
-    def failCount(_text):
-        raise AssertionError("count_tokens API called inside the optimizer loop")
-    monkeypatch.setattr(optimizer_tokens, "countClaudeMessage", failCount)
-    prompt = "Could you please write a bio for our CEO in under 300 words? Thanks!"
-    report = optimizer.describeCheck(prompt, "Write a CEO bio in under 300 words.", "claude")
-    assert f"original {optimizer_tokens.estimateTokens(prompt, 'claude')}" in report
-    content, isError, _ = optimizer.runTool("count_tokens", {"text": "A brand new draft."}, prompt, "claude")
-    assert content == f"{optimizer_tokens.estimateTokens('A brand new draft.', 'claude')} tokens" and isError is False
 
 #A submission that drops a lock is refused with the reasons, and the fixed one is accepted
 def test_callOptimizerLLM_refuses_broken_submission(fakeClient):
@@ -379,30 +351,29 @@ def test_callOptimizerLLM_reminds_to_submit(fakeClient):
 #An unchanged submission isn't checked, since it is the original
 def test_runTool_unchanged_submission_skips_check():
     rewrite = makeRewrite("Write a bio in under 300 words.", unchanged=True, changes=[])
-    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), "Write a bio in under 300 words.", "chatgpt")
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), "Write a bio in under 300 words.")
     assert (content, isError) == ("Submitted.", False)
     assert submitted.unchanged is True
 
-#count_tokens counts with the target's tokenizer, and an unknown tool is reported as an error
-def test_runTool_count_tokens_and_unknown_tool():
-    content, isError, _ = optimizer.runTool("count_tokens", {"text": "Hello, world"}, "", "chatgpt")
-    assert content == f"{optimizer.countTokens('Hello, world')} tokens" and isError is False
-    assert optimizer.runTool("delete_everything", {}, "", "chatgpt")[1] is True
+#A tool that no longer exists, or never did, is reported as an error
+@pytest.mark.parametrize("name", ["check_rewrite", "count_tokens", "delete_everything"])
+def test_runTool_unknown_tool(name):
+    assert optimizer.runTool(name, {}, "")[1] is True
 
 #An invalid submission is an error result, not a crash
 def test_runTool_invalid_submission():
-    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, {"optimizedPrompt": "x"}, "Write x.", "chatgpt")
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, {"optimizedPrompt": "x"}, "Write x.")
     assert isError is True and submitted is None
     assert content.startswith("Invalid submission")
 
 #Every tool call in one turn gets a result, all in one message
 def test_callOptimizerLLM_answers_parallel_calls_together(fakeClient):
+    broken = makeRewrite("Write a bio.").model_dump()
     messages = fakeClient([
-        [toolUse("count_tokens", {"text": "Write a poem."}, "toolu_1"),
-         toolUse("check_rewrite", {"rewrite": "Write a poem."}, "toolu_2")],
-        submitTurn(makeRewrite("Write a poem."), "toolu_3"),
+        [toolUse(optimizer.SUBMIT_TOOL, broken, "toolu_1"), toolUse(optimizer.SUBMIT_TOOL, broken, "toolu_2")],
+        submitTurn(makeRewrite("Write a bio in under 300 words."), "toolu_3"),
     ])
-    optimizer.callOptimizerLLM("Please write a poem.", [])
+    optimizer.callOptimizerLLM("Please write a bio in under 300 words.", [])
     assert [r["tool_use_id"] for r in toolResults(messages, 1)] == ["toolu_1", "toolu_2"]
 
 #Type rules are listed after the issues and before the prompt, one bullet per type
