@@ -30,6 +30,11 @@ class UploadUrlRequest(BaseModel):
     mime: str = Field(min_length=1)
     size: int = Field(gt=0)
 
+class UploadUrlsRequest(BaseModel):
+    files: list[UploadUrlRequest] = Field(min_length=1, max_length=10)
+
 class UploadUrlResponse(BaseModel):
-    path: str
-    signed_url: str
+    filename: str
+    path: str | None = None
+    signed_url: str | None = None
+    error: str | None = None
