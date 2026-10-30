@@ -10,12 +10,15 @@ from agents.hooks.orchestrator import OrchestrationHooks
 from agents.orchestrator import OrchestrationResult, runPipeline
 from agents.validator import ValidationResult
 from repository.client import get_supabase
+from repository.context import create_contexts
 from repository.llm_call import create_llm_call
 from repository.orchestration import create_orchestration, update_orchestration, update_orchestration_status
 from repository.prompts import create_prompt
 from repository.optimized_prompts import create_optimized_prompt
 
+from repository.storage import context_file_exists
 from repository.validation import create_validation
+from schema.context import ContextCreate, ContextInsert
 from schema.llm_call import LlmCall
 from schema.optimized_prompts import OptimizedPromptInsert
 from schema.orchestration import OrchestrationInsert, OrchestrationUpdate
@@ -33,6 +36,7 @@ class RunOrchestrator(OrchestrationHooks):
     user_id: str 
     prompt: str
     target: str
+    context: list[ContextCreate] = field(default_factory=list)
     db: Client = field(default_factory=get_supabase, init=False)
     run_id: int | None = field(default=None, init=False)
     status: str = field(default="pending", init=False)
@@ -42,8 +46,38 @@ class RunOrchestrator(OrchestrationHooks):
 
     # before we can run the pipeline, we save anything necessary beforehand and then we can continue (and actually run it!)
     def execute(self) -> OrchestrationResult:
+        # for our context, we make sure that it is legit context and not fake!
+        # TODO: make this into another function perhaps
+        # TODO: PART 2, change the exception bc it's generic right now
+        for i in self.context:
+            # checking to make sure that the file is actually the user's file
+            curr = i.file_link
+            folder = curr.split("/")
+
+            # since files should be in the "user_id/id.ext" format
+            if len(folder) != 2:
+                raise Exception("this is not a valid file link")
+
+            # check to make sure the file is theirs
+            # we check [-2] in the case that people upload a file like "attacker/../victim/whatever.ext"
+            # in this case the .. collapses and supabase gets "victim/whatever.ext" that is bad security!!
+            if folder[-2] != self.user_id:
+                raise Exception("this is not your file")
+
+            # checking to make sure the file actually exists
+            if not context_file_exists(db=get_supabase(),path=curr):
+                raise Exception("this file doesn't even exist!")
+
         promptFormatted : PromptInsert = PromptInsert(user_id=self.user_id, txt_prompt=self.prompt, target=self.target)
         savedPrompt = create_prompt(self.db, promptFormatted)
+        
+        # inserting context in the db
+        context_formatted = []
+        savedContext = None
+        if self.context:
+            for i in self.context:
+                context_formatted.append(ContextInsert(**i.model_dump(), user_id=self.user_id, prompt_id=savedPrompt[0]["prompt_id"]))
+            savedContext = create_contexts(self.db, context_formatted)
 
         savedRun = create_orchestration(self.db, OrchestrationInsert(user_id=self.user_id, prompt_id=savedPrompt[0]["prompt_id"]))
         self.run_id = savedRun[0]["run_id"]
