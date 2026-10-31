@@ -30,7 +30,7 @@ def test_data_routes_query_as_the_caller(client, db, user_clients, method, path)
 
 @pytest.mark.parametrize("path,body", [
     ("/prompts", {"txt_prompt": "hi", "target": "chatgpt"}),
-    ("/optimized-prompts", {"txt_prompt": "hi", "tokens": 1, "tokens_saved": 0, "percent_saved": 0}),
+    ("/optimized-prompts", {"run_id": 1, "txt_prompt": "hi", "tokens": 1, "tokens_saved": 0, "percent_saved": 0}),
 ])
 def test_request_body_cannot_choose_the_user(client, db, path, body):
     # a user_id sent by the client is dropped; the database fills it from the token
