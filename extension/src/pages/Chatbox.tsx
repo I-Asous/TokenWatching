@@ -7,11 +7,14 @@ type ChatTurn = {
   result: string | null;
   status: "processing" | "complete" | "error";
   wasOptimized: boolean | null;
+  optimizationMessage: string | null;
 };
 
 type OrchestrationResponse = {
   finalPrompt: string;
   wasOptimized: boolean;
+  error?: string | null;
+  attempts?: Array<{ passed: boolean }>;
 };
 
 const promptExamples = [
@@ -78,7 +81,7 @@ function Chatbox() {
     const turnId = Date.now();
     setTurns((previousTurns) => [
       ...previousTurns,
-      { id: turnId, prompt: txtPrompt, result: null, status: "processing", wasOptimized: null },
+      { id: turnId, prompt: txtPrompt, result: null, status: "processing", wasOptimized: null, optimizationMessage: null },
     ]);
 
     try {
@@ -89,7 +92,17 @@ function Chatbox() {
 
       setTurns((previousTurns) => previousTurns.map((turn) =>
         turn.id === turnId
-          ? { ...turn, result: result.finalPrompt, status: "complete", wasOptimized: result.wasOptimized }
+          ? {
+              ...turn,
+              result: result.finalPrompt,
+              status: "complete",
+              wasOptimized: result.wasOptimized,
+              optimizationMessage: result.error
+                ? `Optimization failed: ${result.error}`
+                : result.attempts?.length
+                  ? "No rewrite passed validation; original returned."
+                  : "Original returned unchanged (no changes needed or no token savings).",
+            }
           : turn,
       ));
       setPromptValue("");
@@ -124,7 +137,9 @@ function Chatbox() {
                   <>
                     <p>{turn.result}</p>
                     <small>
-                      {turn.wasOptimized ? "Optimized prompt" : "No optimization was needed"}
+                      {turn.wasOptimized
+                        ? "Optimized prompt"
+                        : turn.optimizationMessage}
                     </small>
                   </>
                 )}

@@ -22,7 +22,7 @@ const barValueLabels: Plugin<"bar"> = {
       const meta = chart.getDatasetMeta(datasetIndex);
       meta.data.forEach((bar, index) => {
         const { x, y } = bar.getProps(["x", "y"], true);
-        ctx.fillText(String(dataset.data[index]), x, y - 7);
+        ctx.fillText(Number(dataset.data[index]).toLocaleString(undefined, { maximumFractionDigits: 0 }), x, y - 7);
       });
     });
 
@@ -74,7 +74,12 @@ export default function Stats() {
   const [year, month] = selectedMonth.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
   const weekCount = Math.ceil(daysInMonth / 7);
-  const chartLabels = Array.from({ length: weekCount }, (_, index) => `Week ${index + 1}`);
+  const chartLabels = Array.from({ length: weekCount }, (_, index) => {
+    const startDay = index * 7 + 1;
+    const endDay = Math.min(startDay + 6, daysInMonth);
+    const monthName = new Date(year, month - 1, 1).toLocaleString(undefined, { month: "short" });
+    return `${monthName} ${startDay}–${endDay}`;
+  });
   const chartValues = chartLabels.map((_, index) => {
     const startDay = index * 7 + 1;
     const endDay = Math.min(startDay + 6, daysInMonth);
@@ -142,7 +147,14 @@ export default function Stats() {
             layout: { padding: { top: 18 } },
             plugins: { legend: { display: false } },
             scales: {
-              y: { beginAtZero: true, title: { display: true, text: "Tokens saved" } },
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0,
+                  callback: (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+                },
+                title: { display: true, text: "Tokens saved" },
+              },
             },
           }}
           plugins={[barValueLabels]}
