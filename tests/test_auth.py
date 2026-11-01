@@ -20,7 +20,7 @@ from conftest import EXTENSION_ORIGIN, KEY, OTHER_KEY, PUBLIC_PATHS, api_routes,
 # pylint: disable=redefined-outer-name,unused-argument  # pytest fixtures
 
 # a backend-verified route that is cheap to call: the repository is faked by `db`
-VERIFIED = ("DELETE", "/users")
+VERIFIED = ("GET", "/prompts")
 
 
 def b64(data: bytes) -> str:
