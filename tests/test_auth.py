@@ -1,7 +1,6 @@
 """
 Tests for Clerk token verification (backend/auth.py) - every API route needs a
-token, and the routes the backend verifies itself (/users, /orchestrator) reject
-every kind of bad token before the database is touched.
+token, and every kind of bad token is rejected before the database is touched.
 """
 import base64
 import hashlib
@@ -116,10 +115,12 @@ def test_token_for_another_origin_rejected(client, db):
     pytest.param(make_token(azp=EXTENSION_ORIGIN), id="azp-extension"),
     pytest.param(make_token(drop=("azp",)), id="azp-missing"),
 ])
-def test_valid_token_accepted_with_token_identity(client, db, token):
-    # the user being acted on comes from the token, never from the request
+def test_valid_token_accepted_with_token_identity(client, db, user_clients, token):
     assert call_verified(client, token).status_code == 200
-    assert db.calls == [("delete_user", ("user_me",))]
+    assert user_clients == [token]
+    [(name, (user_client,))] = db.calls
+    assert name == "get_user_input_prompts"
+    assert user_client.token == token
 
 
 def test_orchestrator_rejects_bad_token(client, db, monkeypatch):

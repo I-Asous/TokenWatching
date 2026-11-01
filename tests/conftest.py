@@ -29,7 +29,7 @@ OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 # these routers verify the token in the backend (Depends(current_user));
 # every other API route queries supabase as the caller and relies on RLS
-VERIFIED_PREFIXES = ("/users", "/orchestrator", "/contexts/upload-urls")
+VERIFIED_PREFIXES = ("/orchestrator", "/contexts/upload-urls")
 # routes meant to work without a token: the health check, and guest mode (saves under the shared guest account)
 PUBLIC_PATHS = ("/", "/prompts/guest-prompt")
 
