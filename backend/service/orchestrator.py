@@ -1,7 +1,5 @@
 # TODO: so many imports can we like not...
 
-from datetime import datetime, timezone
-
 # from agents.orchestrator import runPipeline 
 # from schema.orchestrator import OrchestrationResult
 from dataclasses import dataclass, field
@@ -11,17 +9,22 @@ from supabase import Client
 from agents.hooks.orchestrator import OrchestrationHooks
 from agents.orchestrator import OrchestrationResult, runPipeline
 from agents.validator import ValidationResult
-from repository.audit import create_audit
 from repository.client import get_supabase
+from repository.context import create_contexts
+from repository.llm_call import create_llm_call
 from repository.orchestration import create_orchestration, update_orchestration, update_orchestration_status
 from repository.prompts import create_prompt
 from repository.optimized_prompts import create_optimized_prompt
 
+from repository.storage import context_file_exists
 from repository.validation import create_validation
+from schema.context import ContextCreate, ContextInsert
+from schema.llm_call import LlmCall
 from schema.optimized_prompts import OptimizedPromptInsert
 from schema.orchestration import OrchestrationInsert, OrchestrationUpdate
 from schema.prompts import PromptInsert
-from schema.audit import AuditInsert
+from service.audit import save_audit
+from service.structure_response import structure_response
 
 from agents.auditor import AuditResult
 from agents.optimizer import OptimizationResult
@@ -33,6 +36,7 @@ class RunOrchestrator(OrchestrationHooks):
     user_id: str 
     prompt: str
     target: str
+    context: list[ContextCreate] = field(default_factory=list)
     db: Client = field(default_factory=get_supabase, init=False)
     run_id: int | None = field(default=None, init=False)
     status: str = field(default="pending", init=False)
@@ -42,8 +46,38 @@ class RunOrchestrator(OrchestrationHooks):
 
     # before we can run the pipeline, we save anything necessary beforehand and then we can continue (and actually run it!)
     def execute(self) -> OrchestrationResult:
+        # for our context, we make sure that it is legit context and not fake!
+        # TODO: make this into another function perhaps
+        # TODO: PART 2, change the exception bc it's generic right now
+        for i in self.context:
+            # checking to make sure that the file is actually the user's file
+            curr = i.file_link
+            folder = curr.split("/")
+
+            # since files should be in the "user_id/id.ext" format
+            if len(folder) != 2:
+                raise Exception("this is not a valid file link")
+
+            # check to make sure the file is theirs
+            # we check [-2] in the case that people upload a file like "attacker/../victim/whatever.ext"
+            # in this case the .. collapses and supabase gets "victim/whatever.ext" that is bad security!!
+            if folder[-2] != self.user_id:
+                raise Exception("this is not your file")
+
+            # checking to make sure the file actually exists
+            if not context_file_exists(db=get_supabase(),path=curr):
+                raise Exception("this file doesn't even exist!")
+
         promptFormatted : PromptInsert = PromptInsert(user_id=self.user_id, txt_prompt=self.prompt, target=self.target)
         savedPrompt = create_prompt(self.db, promptFormatted)
+        
+        # inserting context in the db
+        context_formatted = []
+        savedContext = None
+        if self.context:
+            for i in self.context:
+                context_formatted.append(ContextInsert(**i.model_dump(), user_id=self.user_id, prompt_id=savedPrompt[0]["prompt_id"]))
+            savedContext = create_contexts(self.db, context_formatted)
 
         savedRun = create_orchestration(self.db, OrchestrationInsert(user_id=self.user_id, prompt_id=savedPrompt[0]["prompt_id"]))
         self.run_id = savedRun[0]["run_id"]
@@ -54,8 +88,7 @@ class RunOrchestrator(OrchestrationHooks):
             update_orchestration(self.db, self.run_id, OrchestrationUpdate(
                 status="failed",
                 error_stage=self.status if self.status != "pending" else "other",
-                error_message=str(e),
-                finished_at=datetime.now(timezone.utc)))
+                error_message=str(e)))
             raise RuntimeError(f"Orchestration error: {str(e)}") from e
 
     # allows something else (ex. orchestrator, agent) to update what stage they're currently at
@@ -67,12 +100,11 @@ class RunOrchestrator(OrchestrationHooks):
 
     # calls repository to save an audit
     def saveAudit(self, audit: AuditResult):
-        auditFormatted : AuditInsert = structure_response(audit, self.user_id, run_id=self.run_id)
-        create_audit(self.db, auditFormatted)
+        save_audit(self.db, self.user_id, self.run_id, audit)
 
     # calls repository to save an optimization
     def saveOptimization(self, optimization: OptimizationResult):
-        optimizationFormatted : OptimizedPromptInsert = structure_response(optimization, self.user_id, feedback_validation_id=self.last_rejected_validation_id)
+        optimizationFormatted : OptimizedPromptInsert = structure_response(optimization, self.user_id, run_id=self.run_id, feedback_validation_id=self.last_rejected_validation_id)
         savedOptimization = create_optimized_prompt(self.db, optimizationFormatted)
         self.last_optimized_prompt_id = savedOptimization[0]["optimized_prompt_id"]
 
@@ -86,6 +118,10 @@ class RunOrchestrator(OrchestrationHooks):
         else:
             self.last_rejected_validation_id = savedValidation[0]["validation_id"]
 
+    # save an llm call (unsure how it will be set up so needs fine tuning)
+    def saveLLMCall(self, result: LlmCall):
+        create_llm_call(result)
+
     # orchestrator is done with it's job and we can update it with any necessary information
     def finishJob(self, result: OrchestrationResult):
         orchestrationFormated : OrchestrationUpdate = structure_response(result, self.user_id, final_optimized_prompt_id=self.final_optimized_prompt_id)
@@ -95,30 +131,3 @@ class RunOrchestrator(OrchestrationHooks):
             orchestrationFormated.error_stage = self.status
             orchestrationFormated.error_message = result.error
         update_orchestration(self.db, self.run_id, orchestrationFormated)
-
-## helpar to structure the response into a proper insert and stuff (bc sometimes it has more stuff...)
-def structure_response(result, user_id: str, run_id=None, optimized_prompt_id=None, feedback_validation_id=None, final_optimized_prompt_id=None):
-    if isinstance(result, AuditResult):
-        return AuditInsert(user_id=user_id, run_id=run_id, token_count=result.token_count, estimated_cost=result.estimatedCost, severity=result.severity)
-    
-    if isinstance(result, OptimizationResult):
-        return OptimizedPromptInsert(
-            user_id=user_id,
-            feedback_validation_id=feedback_validation_id,
-            txt_prompt=result.optimizedPrompt,
-            tokens=result.optimizedTokens,
-            tokens_saved=result.tokensSaved,
-            percent_saved=result.percentSaved,
-            unchanged=result.optimizedPrompt == result.originalPrompt,
-            changes=result.changes,
-            preserved_constraints=result.preservedConstraints)
-    
-    if isinstance(result, ValidationResult):
-        return ValidationInsert(user_id=user_id, optimized_prompt_id=optimized_prompt_id,
-                                score=result.qualityScore, passed=result.passed,
-                                reasoning=result.reasoning, react_trace=result.reactTrace)
-    
-    if isinstance(result, OrchestrationResult):
-        return OrchestrationUpdate(status="done", final_optimized_prompt_id=final_optimized_prompt_id,
-                                   finished_at=datetime.now(timezone.utc))
-    raise TypeError(f"{type(result).__name__} is not a value type to structure...")

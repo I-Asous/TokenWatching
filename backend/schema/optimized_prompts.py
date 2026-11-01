@@ -7,6 +7,7 @@ from datetime import datetime
 class OptimizedPrompt(BaseModel):
     optimized_prompt_id: int
     user_id: str
+    run_id: int
     llm_call_id: int | None = None
     feedback_validation_id: int | None = None
     txt_prompt: str
@@ -19,6 +20,7 @@ class OptimizedPrompt(BaseModel):
     created_at: datetime
 
 class OptimizedPromptCreate(BaseModel):
+    run_id: int
     llm_call_id: int | None = None
     feedback_validation_id: int | None = None
     txt_prompt: str = Field(min_length=1)
