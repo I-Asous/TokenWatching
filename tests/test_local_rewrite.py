@@ -17,7 +17,7 @@ def test_deleteFiller_greeting_and_closing():
 
 #A real question keeps its question mark once the wrapper is gone
 def test_deleteFiller_keeps_real_questions():
-    rewrite, _ = deleteFiller("Could you please tell me what DNS is? Also, is it really slow?")
+    rewrite, _ = deleteFiller("Could you please tell me what DNS is? Also, is it slow?")
     assert rewrite == "Tell me what DNS is. Also, is it slow?"
 
 #Sentences without filler are copied exactly, and so is code
@@ -50,11 +50,92 @@ def test_deleteFiller_leaves_quoted_text_alone():
 def test_deleteFiller_keeps_filler_after_negation(prompt, kept):
     assert deleteFiller(prompt)[0] == kept
 
-#"Could you please help me with this?" leaves only "this": a fragment, so nothing is rewritten locally
-def test_deleteFiller_refuses_to_leave_a_fragment():
+#"Could you please help me with this?" has no request verb to keep, so the wrapper stays and the Optimizer handles it
+def test_localRewrite_defers_wrapper_with_no_request_verb():
     prompt = "Hi there! Could you please help me with this? Don't just list the bugs in my code, fix them. Thanks so much!"
-    assert deleteFiller(prompt)[0] == ""
+    assert deleteFiller(prompt)[0] == "Could you please help me with this? Don't just list the bugs in my code, fix them."
     assert localRewrite(prompt) is None
+
+@pytest.mark.parametrize("prompt", [
+    "Can you freeze cooked rice? Thanks so much!",
+    "Could you get sick from eating raw cookie dough? Thanks in advance!",
+    "Would you say this is a good idea for a startup? Thanks!",
+    "Can you build muscle on a vegan diet? Thanks so much!",
+    "Can you write off a home office as a W-2 employee? Thanks so much!",
+    "Is it possible to write a for loop in bash? Thank you so much!",
+])
+#A question with a general "you" isn't a polite request: cutting "Can you" turns it into a command
+def test_deleteFiller_keeps_real_yes_no_questions(prompt):
+    assert deleteFiller(prompt)[0] == prompt.split("?")[0] + "?"
+
+@pytest.mark.parametrize("prompt, kept", [
+    ("How do I say thank you in Japanese? Thanks so much!", "How do I say thank you in Japanese?"),
+    ("How do you say please in French? Thank you!", "How do you say please in French?"),
+    ("How do you say please? Thank you!", "How do you say please?"),
+    ("Please explain the just war theory. Thank you so much!", "Explain the just war theory."),
+    ("Please explain just-in-time compilation. Thank you so much!", "Explain just-in-time compilation."),
+    ("Please name a movie like Just Mercy. Thank you so much!", "Name a movie like Just Mercy."),
+    ("Name a band like Thank You Scientist please. Thank you so much!", "Name a band like Thank You Scientist please."),
+    ("Please write a toast that ends with cheers. Thank you so much!", "Write a toast that ends with cheers."),
+    ("Please write a thank you note to my boss. Thanks!", "Write a thank you note to my boss."),
+    ("Please draft a letter that says thank you to our donors. Thanks so much!", "Draft a letter that says thank you to our donors."),
+    ("Write an email that opens with I hope you are doing well. Thank you so much!", "Write an email that opens with I hope you are doing well."),
+    ("Please write a reminder asking the client to kindly pay the invoice. Thanks!", "Write a reminder asking the client to kindly pay the invoice."),
+    ("Hello World in Rust. Thank you so much!", "Hello World in Rust."),
+    ("Hello, world in Rust. Thank you so much!", "Hello, world in Rust."),
+    ("Hi-fi speakers, which should I buy? Thank you so much!", "Hi-fi speakers, which should I buy?"),
+])
+#These words are what the prompt is about when they sit inside a sentence, so only the real closing goes
+def test_deleteFiller_keeps_words_the_prompt_is_about(prompt, kept):
+    assert deleteFiller(prompt)[0] == kept
+
+@pytest.mark.parametrize("prompt, kept", [
+    ("Write a policy. Thank you so much for helping with this.", "Write a policy."),
+    ("Explain DNS. Thanks so much for your help, I really appreciate it!", "Explain DNS."),
+    ("Explain DNS. Thanks a lot for this.", "Explain DNS."),
+    ("Explain DNS. I would really appreciate it. Thanks!", "Explain DNS."),
+    ("Explain DNS. Any help is greatly appreciated!", "Explain DNS."),
+])
+#A closing sentence goes whole, so it can't leave "For helping with this." behind
+def test_deleteFiller_removes_whole_closing_sentences(prompt, kept):
+    assert deleteFiller(prompt)[0] == kept
+
+@pytest.mark.parametrize("prompt", [
+    "Write a bio. Thank you very much, and I look forward to seeing what you come up with.",
+    "Write a bio. I'd really appreciate it if you could keep it short.",
+])
+#A closing that also asks or says something else is kept
+def test_deleteFiller_keeps_closings_with_other_content(prompt):
+    assert deleteFiller(prompt)[0] == prompt
+
+#"Would you mind telling me" can't lose its wrapper by deleting: "telling" would have to be reworded
+def test_deleteFiller_keeps_would_you_mind():
+    prompt = "Would you mind telling me the boiling point of water? Thanks!"
+    assert deleteFiller(prompt)[0] == "Would you mind telling me the boiling point of water?"
+
+#A wrapper inside a sentence is left alone, so the sentence's grammar isn't broken
+def test_deleteFiller_keeps_wrapper_inside_a_sentence():
+    prompt = "I'm writing a review and I'd really appreciate it if you could give me an overview."
+    assert deleteFiller(prompt)[0] == prompt
+
+#Words inside a sentence stay, filler or not
+def test_deleteFiller_keeps_filler_words_inside_a_sentence():
+    prompt = "Is it really safe, and is this just a phase, basically?"
+    assert deleteFiller(prompt)[0] == prompt
+
+#A greeting and a hope sentence go at the start, with or without punctuation between them
+@pytest.mark.parametrize("prompt, kept", [
+    ("Hi, hope you're having a great day! Explain DNS.", "Explain DNS."),
+    ("Hey can you explain DNS?", "Explain DNS."),
+    ("Good morning! Could you please list three fruits?", "List three fruits."),
+])
+def test_deleteFiller_removes_openings(prompt, kept):
+    assert deleteFiller(prompt)[0] == kept
+
+#Pasted material after a colon is the user's, including what looks like politeness
+def test_deleteFiller_leaves_pasted_material_alone():
+    prompt = "Summarize this sentence: I would really appreciate it if you could stop doing that. Thanks so much!"
+    assert deleteFiller(prompt)[0] == prompt
 
 #Dropping a "just" that follows a negation isn't filler-only, so the Validator still checks it
 def test_isFillerOnlyEdit_rejects_dropped_word_after_negation():
@@ -103,3 +184,15 @@ def test_isFillerOnlyEdit_accepts_deletions(rewrite):
 #Rewording, dropping, adding or reordering real words is not a filler-only edit
 def test_isFillerOnlyEdit_rejects_other_edits(rewrite):
     assert not isFillerOnlyEdit("Please, could you kindly write a short story about a dragon? Thank you so much!", rewrite)
+
+@pytest.mark.parametrize("original, rewrite", [
+    ("Can you freeze cooked rice?", "Freeze cooked rice."),
+    ("How do I say thank you in Japanese?", "How do I say in Japanese?"),
+    ("Please write a thank you note to my boss.", "Write a note to my boss."),
+    ("Please explain the just war theory.", "Explain the war theory."),
+    ("Write a toast for my sister's wedding that ends with cheers.", "Write a toast for my sister's wedding that ends with"),
+    ("Name a movie like Just Mercy.", "Name a movie like Mercy."),
+])
+#These look like deletions, but each changes the request, so the Validator has to see them
+def test_isFillerOnlyEdit_rejects_deletions_that_change_the_request(original, rewrite):
+    assert not isFillerOnlyEdit(original, rewrite)

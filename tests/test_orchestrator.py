@@ -388,7 +388,19 @@ def test_runPipeline_short_prompt_still_gets_local_rewrite(fakeAgents, monkeypat
     assert fake.optimizerCalls == []
     assert result.wasOptimized is True
 
-CHAT_PROMPT = "Hey, could you please suggest some fun weekend plans for me? Thanks so much!"
+#A local rewrite that saves almost nothing doesn't stop the Optimizer from trying for more
+def test_runPipeline_low_saving_local_rewrite_goes_to_optimizer(fakeAgents, monkeypatch):
+    prompt = ("I'm writing a literature review on sleep and memory in adolescents and I'd really appreciate it if you "
+              "could give me an overview of the main findings from the last ten years. Please only include peer-reviewed "
+              "sources and include citations in APA format. If you're not sure that a source is real, say so.")
+    assert realLocalRewrite(prompt).tokensSaved < orchestrator.MIN_TOKENS_SAVED
+    fake = fakeAgents(issues=["filler"], rewrites=[(prompt, 0)])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    orchestrator.runPipeline(prompt)
+
+    assert len(fake.optimizerCalls) == 1
+
+CHAT_PROMPT ="Hey, could you please suggest some fun weekend plans for me? Thanks so much!"
 CODE_PROMPT = "Hey, could you please fix this, thanks so much!\n```python\ndef add(a, b): return a - b\n```"
 CODE_REWRITE = "Fix this:\n```python\ndef add(a, b): return a - b\n```"
 

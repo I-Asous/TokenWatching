@@ -1,16 +1,40 @@
 import re
 from dataclasses import dataclass
 from spacy.lang.en.stop_words import STOP_WORDS
-from agents.auditor import POLITENESS_RE, MAX_SPANS_SHOWN, maskProtected, findRemovableFiller, runRuleCheck
+from agents.auditor import MAX_SPANS_SHOWN, maskProtected, findRemovableFiller, runRuleCheck
 from agents.optimizer import OptimizationResult, findRewriteProblems
 from agents.tokens import countTokens, DEFAULT_TARGET
+from agents.vagueness import PASTED_AFTER_COLON_RE
 
-#Filler words that are safe to delete outright. The Auditor's FILLER_WORDS also has words that
-#carry meaning ("best", "perfect", "somewhat", "maybe"), which it only counts, so they're left to the Optimizer
-DELETABLE_FILLER = ["please", "thank you", "really", "basically", "essentially", "literally", "just"]
-DELETABLE_FILLER_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, DELETABLE_FILLER)) + r")\b", re.IGNORECASE)
-#After a negation these words carry the meaning: "Don't just list the bugs" -> "Don't list the bugs" flips it
-NEGATION_BEFORE_RE = re.compile(r"(?:\b(?:not|never|no)|n't)\s+$", re.IGNORECASE)
+#Only the edges of a prompt or sentence are deleted, never a word inside one: "How do I say thank you in Japanese?",
+#"the just war theory" and "a band like Thank You Scientist" all use these words as what they're asking about.
+#Anything else is left for the Optimizer, since a missed cut costs a call and a wrong cut changes the request
+
+#A greeting needs punctuation or a request after it, so "Hello World in Rust" and "Hi-fi speakers" aren't greetings
+GREETING_RE = re.compile(r"(?:hi|hey|hello|good (?:morning|afternoon|evening))(?: there)?"
+                         r"(?:[!,.]+(?!\s*world\b)|(?=\s+(?:could|can|would|please|i)\b)|(?=\s*$))", re.IGNORECASE)
+HOPE_RE = re.compile(r"(?:i\s+)?hope (?:you're|you are) (?:doing )?(?:well|good|great|having an? (?:\w+ )?"
+                     r"(?:day|week|morning|afternoon|evening))[!.,]*", re.IGNORECASE)
+PLEASE_START_RE = re.compile(r"please\b(?![-'])(?!\s+(?:is|means|was)\b),?", re.IGNORECASE)
+#Only with a comma: "How do you say please?" ends in the word it's asking about
+TRAILING_PLEASE_RE = re.compile(r",\s*please(?=[.!?:]*\s*$)", re.IGNORECASE)
+#Verbs that ask the model to do something. Verbs people use with a general "you" are left out: "Can you freeze
+#cooked rice?" and "Can you build muscle on a vegan diet?" are questions, and cutting "Can you" makes them commands
+REQUEST_VERBS = (r"write(?!\s+off\b)|draft|compose|rewrite|rephrase|proofread|summarize|summarise|translate|explain|"
+                 r"describe|define|suggest|recommend|list|compare|review|brainstorm|outline|(?:tell|give|show|teach) (?:me|us)")
+REQUEST_WRAPPER_RE = re.compile(
+    r"(?:(?:could|can|would) you(?:\s+(?:please|kindly|possibly|maybe))*(?:\s+help me(?:\s+to)?|\s+be so kind as to)?"
+    r"|i (?:was|am) (?:just )?wondering if you could(?:\s+(?:please|maybe))*"
+    r"|i(?:'d| would) (?:really |greatly )?(?:like|love) (?:it )?if you could(?:\s+please)?"
+    r"|is it possible for you to|kindly)"
+    rf"(?=\s+(?:{REQUEST_VERBS})\b)", re.IGNORECASE)
+#A sentence made of nothing but thanks. "Thanks for helping with this" has to go whole: cutting only "Thanks" leaves "for helping with this"
+THANKS = (r"(?:(?:many )?thanks?(?: you)?(?: so much| very much| a lot| a ton| in advance)*"
+          r"(?: for (?:your|the|any|all|this|helping|that)(?: me)?(?: (?:help|time|assistance))?(?: with (?:this|that|it))?)?(?: in advance)?"
+          r"|cheers"
+          r"|i(?:'d| would)? (?:really |greatly |truly )?appreciate (?:it|this|any help|your help)(?: (?:so|very) much)?"
+          r"|(?:any|your) help (?:is|would be) (?:greatly |much |really )?appreciated)")
+CLOSING_SENTENCE_RE = re.compile(rf"{THANKS}(?:[,;]?\s*(?:and\s+)?{THANKS})*[!.]*", re.IGNORECASE)
 
 #A sentence ends after .!? followed by whitespace, or at a newline. Only sentences with a deletion are tidied,
 #every other one is kept byte for byte
@@ -28,31 +52,59 @@ class Deletion:
     end: int
 
 """
-* @brief Finds the politeness and filler a rewrite can delete without an LLM.
+* @brief Finds the politeness a rewrite can delete without an LLM.
 * @post
-* 1. Politeness phrases (the Auditor's POLITENESS_PATTERNS) and DELETABLE_FILLER words are matched outside
-*    code blocks, quoted text and optional sentences (maskProtected), so code, quotes and "Maybe add tests."
-*    are never touched.
-* 2. A filler word right after a negation ("not just", "don't really") is kept, since it carries the meaning.
-* 3. Overlapping matches are merged, and whitespace at either end of a match is left in the text.
-* 4. Returns the deletions in order, as offsets into text.
+* 1. A greeting and "I hope you're well" are deleted only at the very start of the prompt.
+* 2. At the start of any sentence, "Please" and a request wrapper directly before a REQUEST_VERBS verb are
+*    deleted ("Could you please write..."). A wrapper before any other verb is kept ("Can you freeze rice?").
+* 3. ", please" at the end of a sentence is deleted, and so are whole closing sentences of thanks at the end of the prompt.
+* 4. Words inside a sentence are never deleted, so a filler word or a phrase the prompt is about stays.
+* 5. Code blocks, quoted text and optional sentences are skipped (maskProtected), and so is everything from
+*    pasted material after a colon on ("Summarize this: I would really appreciate it if you could stop.").
+* 6. Returns the deletions in order, as offsets into text.
 """
 def findDeletions(text: str) -> list[Deletion]:
     masked = maskProtected(text.replace("’", "'"))
-    ranges = sorted((match.start(), match.end()) for pattern in (POLITENESS_RE, DELETABLE_FILLER_RE)
-                    for match in pattern.finditer(masked) if match.group(0).strip()
-                    and not (pattern is DELETABLE_FILLER_RE and NEGATION_BEFORE_RE.search(masked, 0, match.start())))
-    merged: list[list[int]] = []
-    for start, end in ranges:
-        while start < end and text[start].isspace():
-            start += 1
-        while end > start and text[end - 1].isspace():
-            end -= 1
-        if merged and start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
-        elif start < end:
-            merged.append([start, end])
-    return [Deletion(start, end) for start, end in merged]
+    pasted = PASTED_AFTER_COLON_RE.search(masked)
+    materialStart = pasted.start() if pasted else len(masked)
+    sentences = [strippedRange(masked, start, end) for start, end in sentenceRanges(masked) if masked[start:end].strip()]
+    ranges = []
+
+    opening = True
+    for start, end in sentences:
+        if start >= materialStart:
+            break
+        position = start
+        if opening:
+            position = takeMatch(GREETING_RE, masked, position, end, ranges)
+            hope = HOPE_RE.fullmatch(masked, position, end)
+            if hope:
+                ranges.append((position, hope.end()))
+                position = end
+            opening = position == end
+        position = takeMatch(PLEASE_START_RE, masked, position, end, ranges)
+        takeMatch(REQUEST_WRAPPER_RE, masked, position, end, ranges)
+        trailing = TRAILING_PLEASE_RE.search(masked, start, end)
+        if trailing and end <= materialStart:
+            ranges.append((trailing.start(), trailing.end()))
+
+    for start, end in reversed(sentences):
+        if end > materialStart or not CLOSING_SENTENCE_RE.fullmatch(masked, start, end):
+            break
+        ranges.append((start, end))
+    return [Deletion(start, end) for start, end in sorted(set(ranges))]
+
+#Adds a match at this position to ranges, and returns where the text after it starts
+def takeMatch(pattern: re.Pattern, text: str, position: int, end: int, ranges: list[tuple[int, int]]) -> int:
+    match = pattern.match(text, position, end)
+    if not match:
+        return position
+    ranges.append((match.start(), match.end()))
+    return strippedRange(text, match.end(), end)[0]
+
+def strippedRange(text: str, start: int, end: int) -> tuple[int, int]:
+    part = text[start:end]
+    return end - len(part.lstrip()), start + len(part.rstrip())
 
 def sentenceRanges(text: str) -> list[tuple[int, int]]:
     starts = [0] + [match.end() for match in SENTENCE_END_RE.finditer(text)]
@@ -160,7 +212,8 @@ def localRewrite(prompt: str, target: str = DEFAULT_TARGET,
 * @post
 * 1. Both texts are compared as lowercase words, so capitals, punctuation and spacing don't count.
 * 2. The rewrite's words must appear in the original in the same order, and every original word it
-*    left out must be inside a span findDeletions would delete. No word may be added or reworded.
+*    left out must be inside a span findDeletions would delete. No word may be added or reworded, and a word
+*    cut from inside a sentence ("really", "thank you") goes to the Validator.
 * 3. Words are matched greedily, so an unusual repeat can be reported False; that only costs a Validator call.
 * 4. Code, URLs and numbers are compared exactly by findRewriteProblems, which must run before this.
 """

@@ -133,7 +133,8 @@ def acceptedResult(prompt: str, optimizationResult: OptimizationResult, auditRes
 * 1. The Auditor runs first; if it finds no issues, optimization is
 *    skipped entirely and the original prompt is returned unchanged.
 * 1b. If deleting the prompt's politeness and filler fixes everything the rule checks found
-*    (local_rewrite.py), that rewrite is returned with no Optimizer or Validator call.
+*    (local_rewrite.py) and saves at least MIN_TOKENS_SAVED and MIN_PERCENT_SAVED, that rewrite
+*    is returned with no Optimizer or Validator call.
 * 1c. A prompt under MIN_TOKENS_FOR_OPTIMIZER tokens is returned unchanged with no Optimizer call.
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues, the type's rules and the list of what this prompt must keep (buildMustPreserve),
@@ -186,9 +187,10 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         return orchestrationResult
 
     #Free fast path: when deleting politeness and filler fixes everything the rule checks found,
-    #the rewrite is made locally and neither the Optimizer nor the Validator is called
+    #the rewrite is made locally and neither the Optimizer nor the Validator is called.
+    #One that saves too little goes to the Optimizer instead, same bar as an Optimizer rewrite
     localResult = localRewrite(prompt, target, profile.skipChecks)
-    if localResult:
+    if localResult and localResult.tokensSaved >= MIN_TOKENS_SAVED and localResult.percentSaved >= MIN_PERCENT_SAVED:
         hook.updateStage("optimizing")
         hook.saveOptimization(localResult)
         localValidation = fillerOnlyValidation(prompt, localResult.optimizedPrompt)

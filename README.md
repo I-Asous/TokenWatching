@@ -81,7 +81,7 @@ A free, local check (`agents/locks.py`) that runs between the Optimizer and the 
 
 Two free shortcuts in `agents/local_rewrite.py` cut the pipeline's own API calls:
 
-- **Rule-based rewrite.** When the Auditor flags politeness and filler, it's deleted locally ("Please, could you kindly write a story? Thanks!" becomes "Write a story."). If the rewrite passes the lock check and the rule checks find nothing else, it's returned without calling the Optimizer or the Validator.
+- **Rule-based rewrite.** When the Auditor flags politeness and filler, the greeting, the request wrapper and the closing thanks are deleted locally ("Please, could you kindly write a story? Thanks!" becomes "Write a story."). Only the edges of a prompt or sentence are cut, and a wrapper only goes before a verb that clearly asks for something, so "Can you freeze cooked rice?" and "How do I say thank you in Japanese?" stay as they are. If the rewrite passes the lock check and the rule checks find nothing else, it's returned without calling the Optimizer or the Validator.
 - **Filler-only edits skip the Validator.** If an Optimizer rewrite only deleted politeness and filler (same words, same order, nothing reworded), it can't have changed the request, so no Validator call is made.
 
 ### The Orchestrator
