@@ -24,5 +24,5 @@ def create_audit(db: UserDB, audit: AuditCreate):
     except RuntimeError as exc:
         # 42501 is the postgres error an RLS policy violation raises
         if "42501" in str(exc):
-            raise HTTPException(status_code=403, detail="create_audit: Not your data") from exc
+            raise HTTPException(status_code=403, detail="Not your data") from exc
         raise HTTPException(status_code=500, detail=f"create_audit: {exc}") from exc

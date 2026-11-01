@@ -23,7 +23,7 @@ def read_user_prompt_with_optimized(db: UserDB, prompt_id: int):
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=f"read_user_prompt_with_optimized: {exc}") from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="read_user_prompt_with_optimized: Prompt not found")
+        raise HTTPException(status_code=404, detail="Prompt not found")
     return result
 
 # user submits a prompt
@@ -34,7 +34,7 @@ def create_prompt(db: UserDB, prompt: PromptCreate):
     except RuntimeError as exc:
         # 42501 is the postgres error an RLS policy violation raises
         if "42501" in str(exc):
-            raise HTTPException(status_code=403, detail="create_prompt: Not your data") from exc
+            raise HTTPException(status_code=403, detail="Not your data") from exc
         raise HTTPException(status_code=500, detail=f"create_prompt: {exc}") from exc
 
 
