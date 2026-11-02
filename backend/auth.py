@@ -22,16 +22,19 @@ ALLOWED_ORIGINS = [EXTENSION_ORIGIN, *extra_origins]
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "https://united-skylark-6420.clerk.accounts.dev/.well-known/jwks.json")
 jwks_client = jwt.PyJWKClient(CLERK_JWKS_URL)
 
-def current_user(creds: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]) -> str:
+# returns the user id of a valid clerk token, raises a 401 otherwise
+def verify_token(token: str) -> str:
     try:
-        key = jwks_client.get_signing_key_from_jwt(creds.credentials).key
-        # require exp and sub: PyJWT only checks exp if present, and sub is the user id
-        payload = jwt.decode(creds.credentials, key, algorithms=["RS256"], options={"require": ["exp", "sub"]})
+        key = jwks_client.get_signing_key_from_jwt(token).key
+        payload = jwt.decode(token, key, algorithms=["RS256"], options={"require": ["exp", "sub"]})
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
     if payload.get("azp") and payload["azp"] not in ALLOWED_ORIGINS:
         raise HTTPException(status_code=401, detail="Invalid token origin")
     return payload["sub"]
+
+def current_user(creds: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]) -> str:
+    return verify_token(creds.credentials)
 
 # this makes sure to make a supabase client ONLY with the user's token
 # and it lets us inject it into the routes!

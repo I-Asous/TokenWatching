@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useApi } from "../api";
+import { useOrchestrator } from "../api";
 
 type ChatTurn = {
   id: number;
   prompt: string;
   result: string | null;
   status: "processing" | "complete" | "error";
+  stage: string | null;
   wasOptimized: boolean | null;
   optimizationMessage: string | null;
 };
@@ -17,6 +18,12 @@ type OrchestrationResponse = {
   attempts?: Array<{ passed: boolean }>;
 };
 
+const STAGE_MESSAGES: Record<string, string> = {
+  auditing: "Calculating cost",
+  optimizing: "Optimizing prompt",
+  validating: "Checking the meaning stayed the same",
+};
+
 const promptExamples = [
   "Write a polite email asking my manager to move our meeting to tomorrow.",
   "Explain photosynthesis in simple terms for a middle school student.",
@@ -25,7 +32,7 @@ const promptExamples = [
 ];
 
 function Chatbox() {
-  const api = useApi();
+  const runOrchestrator = useOrchestrator();
   const [promptValue, setPromptValue] = useState("");
   const [promptExampleIndex, setPromptExampleIndex] = useState(0);
   const [showPromptExample, setShowPromptExample] = useState(true);
@@ -81,14 +88,13 @@ function Chatbox() {
     const turnId = Date.now();
     setTurns((previousTurns) => [
       ...previousTurns,
-      { id: turnId, prompt: txtPrompt, result: null, status: "processing", wasOptimized: null, optimizationMessage: null },
+      { id: turnId, prompt: txtPrompt, result: null, status: "processing", stage: null, wasOptimized: null, optimizationMessage: null },
     ]);
 
     try {
-      const result = await api("/orchestrator", {
-        method: "POST",
-        body: JSON.stringify({ prompt: txtPrompt, target: "chatgpt" }),
-      }) as OrchestrationResponse;
+      const result = await runOrchestrator({ prompt: txtPrompt, target: "chatgpt" }, (stage) =>
+        setTurns((previousTurns) => previousTurns.map((turn) => (turn.id === turnId ? { ...turn, stage } : turn))),
+      ) as OrchestrationResponse;
 
       setTurns((previousTurns) => previousTurns.map((turn) =>
         turn.id === turnId
@@ -131,7 +137,12 @@ function Chatbox() {
               </div>
               <div className="chat-message result-message">
                 <span className="message-label">Result</span>
-                {turn.status === "processing" && <p>Working on your prompt…</p>}
+                {turn.status === "processing" && (
+                  <p className="progress" role="status">
+                    <span className="spinner" />
+                    {STAGE_MESSAGES[turn.stage ?? ""] ?? "Working on your prompt…"}
+                  </p>
+                )}
                 {turn.status === "error" && <p>Could not generate a result. You can try again.</p>}
                 {turn.status === "complete" && (
                   <>

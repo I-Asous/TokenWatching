@@ -2,6 +2,7 @@
 
 # from agents.orchestrator import runPipeline 
 # from schema.orchestrator import OrchestrationResult
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from supabase import Client
@@ -37,6 +38,8 @@ class RunOrchestrator(OrchestrationHooks):
     prompt: str
     target: str
     context: list[ContextCreate] = field(default_factory=list)
+    # optional: called with each new stage (ex. to tell the user over a websocket)
+    on_stage: Callable[[str], None] | None = None
     db: Client = field(default_factory=get_supabase, init=False)
     run_id: int | None = field(default=None, init=False)
     status: str = field(default="pending", init=False)
@@ -97,6 +100,8 @@ class RunOrchestrator(OrchestrationHooks):
     def updateStage(self, status: str):
         self.status = status
         update_orchestration_status(self.db, self.run_id, status)
+        if self.on_stage:
+            self.on_stage(status)
 
     # calls repository to save an audit
     def saveAudit(self, audit: AuditResult):
