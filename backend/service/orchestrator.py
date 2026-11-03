@@ -10,6 +10,7 @@ from supabase import Client
 
 from agents.hooks.orchestrator import OrchestrationHooks
 from agents.orchestrator import OrchestrationResult, runPipeline
+from agents.optimizer import Answer
 from agents.validator import ValidationResult
 from repository.audit import create_audit
 from repository.client import get_supabase
@@ -33,6 +34,7 @@ class RunOrchestrator(OrchestrationHooks):
     user_id: str 
     prompt: str
     target: str
+    answers: list[Answer] = field(default_factory=list)
     db: Client = field(default_factory=get_supabase, init=False)
     run_id: int | None = field(default=None, init=False)
     status: str = field(default="pending", init=False)
@@ -49,7 +51,7 @@ class RunOrchestrator(OrchestrationHooks):
         self.run_id = savedRun[0]["run_id"]
 
         try:
-            return runPipeline(self.prompt, self.target, hook=self)
+            return runPipeline(self.prompt, self.target, hook=self, answers=self.answers)
         except Exception as e:
             update_orchestration(self.db, self.run_id, OrchestrationUpdate(
                 status="failed",

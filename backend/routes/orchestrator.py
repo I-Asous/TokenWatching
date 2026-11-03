@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from agents.orchestrator import OrchestrationResult
+from agents.optimizer import Answer
 from auth import current_user
 from schema.orchestration import OrchestrationRequest
 from service.orchestrator import RunOrchestrator
@@ -15,6 +16,7 @@ router = APIRouter()
 @router.post("", response_model=OrchestrationResult)
 def orchestrator(body: OrchestrationRequest, user_id: Annotated[str, Depends(current_user)]):
     try:
-        return RunOrchestrator(user_id=user_id, prompt=body.prompt, target=body.target).execute()
+        answers = [Answer(question=item.question, answer=item.answer) for item in body.answers]
+        return RunOrchestrator(user_id=user_id, prompt=body.prompt, target=body.target, answers=answers).execute()
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

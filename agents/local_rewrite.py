@@ -177,12 +177,14 @@ def deleteFiller(text: str) -> tuple[str, list[str]]:
 * 1. Only runs when the Auditor's filler check flagged the prompt (findRemovableFiller), so the audit's
 *    issues came from the rule checks, not the LLM review, and there is enough to cut to be worth it.
 * 2. The spans are deleted (deleteFiller) and the rewrite must pass findRewriteProblems, save tokens with
-*    the target's tokenizer, and leave nothing for the rule checks to flag (minus skipChecks).
+*    the target's tokenizer, and, if requireClean, leave nothing for the rule checks to flag (minus skipChecks).
 *    Otherwise None is returned and the Optimizer handles the prompt.
-* 3. Returns an OptimizationResult like the Optimizer's, listing the deleted spans as its change.
+* 3. Without requireClean the rewrite may leave other issues (long sentences, dense wording). It's still
+*    safe, so the orchestrator offers it to the Optimizer and falls back to it when no LLM rewrite passes.
+* 4. Returns an OptimizationResult like the Optimizer's, listing the deleted spans as its change.
 """
-def localRewrite(prompt: str, target: str = DEFAULT_TARGET,
-                 skipChecks: frozenset[str] = frozenset()) -> OptimizationResult | None:
+def localRewrite(prompt: str, target: str = DEFAULT_TARGET, skipChecks: frozenset[str] = frozenset(),
+                 requireClean: bool = True) -> OptimizationResult | None:
     if findRemovableFiller(prompt) is None:
         return None
     rewrite, deleted = deleteFiller(prompt)
@@ -191,7 +193,7 @@ def localRewrite(prompt: str, target: str = DEFAULT_TARGET,
 
     originalTokens = countTokens(prompt, target)
     optimizedTokens = countTokens(rewrite, target)
-    if optimizedTokens >= originalTokens or runRuleCheck(rewrite, optimizedTokens, skipChecks):
+    if optimizedTokens >= originalTokens or (requireClean and runRuleCheck(rewrite, optimizedTokens, skipChecks)):
         return None
 
     tokensSaved = originalTokens - optimizedTokens

@@ -303,12 +303,99 @@ def test_system_prompt_keeps_options_and_vagueness():
     assert "maybe add tests" in optimizer.OPTIMIZER_SYSTEM_PROMPT
     assert "keep it exactly as vague" in optimizer.OPTIMIZER_SYSTEM_PROMPT
 
-#Submitting is the only tool, so a clean rewrite takes one API call
-def test_submit_is_the_only_tool(fakeClient):
-    assert [tool["name"] for tool in optimizer.OPTIMIZER_TOOLS] == [optimizer.SUBMIT_TOOL]
+#Every tool ends the task, so a clean rewrite takes one API call
+def test_every_tool_ends_the_task(fakeClient):
+    assert [tool["name"] for tool in optimizer.OPTIMIZER_TOOLS] == [
+        optimizer.SUBMIT_TOOL, optimizer.LOCAL_TOOL, optimizer.ASK_TOOL]
     messages = fakeClient("Write a poem.")
     optimizer.callOptimizerLLM("Please write a poem.", [])
     assert len(messages.requests) == 1
+
+LOCAL = OptimizationResult(originalPrompt="Hi! Please write a poem about rain. Thanks!",
+                           optimizedPrompt="Write a poem about rain.", originalTokens=14, optimizedTokens=7,
+                           tokensSaved=7, percentSaved=50.0, changes=["removed politeness and filler: 'Hi!'"])
+
+#The tools are sent on every call even when a run doesn't offer them, so the cached prefix never changes
+def test_tools_are_the_same_whatever_is_offered(fakeClient):
+    messages = fakeClient("Write a poem.")
+    optimizer.optimizePrompt("Please write a poem.", localResult=LOCAL, questions=["Q?"], maxQuestions=2)
+    assert messages.lastRequest["tools"] is optimizer.OPTIMIZER_TOOLS
+
+#Choosing the local rewrite returns it as is, marked "local"
+def test_optimizePrompt_local_choice(fakeClient):
+    fakeClient([[toolUse(optimizer.LOCAL_TOOL, {"reason": "Nothing more to cut."})]])
+    result = optimizer.optimizePrompt(LOCAL.originalPrompt, localResult=LOCAL)
+    assert result.action == "local"
+    assert result.optimizedPrompt == LOCAL.optimizedPrompt
+    assert result.tokensSaved == LOCAL.tokensSaved
+
+#Asking keeps the original prompt, saves nothing, and returns the questions
+def test_optimizePrompt_ask_user(fakeClient):
+    fakeClient([[toolUse(optimizer.ASK_TOOL, {"questions": ["What goes wrong?"], "reason": "Nothing attached."})]])
+    result = optimizer.optimizePrompt("Please fix this.", questions=["What goes wrong?"], maxQuestions=3)
+    assert result.action == "ask_user"
+    assert result.questions == ["What goes wrong?"]
+    assert result.optimizedPrompt == "Please fix this."
+    assert result.tokensSaved == 0
+
+#A tool the run doesn't offer is refused, and the model can still submit on the next turn
+@pytest.mark.parametrize("name, toolInput", [
+    (optimizer.LOCAL_TOOL, {"reason": "r"}),
+    (optimizer.ASK_TOOL, {"questions": ["Who is it for?"], "reason": "r"}),
+])
+def test_unoffered_tool_is_refused(fakeClient, name, toolInput):
+    messages = fakeClient([[toolUse(name, toolInput)], submitTurn(makeRewrite("Write a poem."), "toolu_2")])
+    result = optimizer.optimizePrompt("Please write a poem.")
+    assert toolResults(messages, 1)[0]["is_error"] is True
+    assert result.action == "rewrite"
+    assert result.optimizedPrompt == "Write a poem."
+
+#ask_user drops blank, repeated and already answered questions, and asks at most maxQuestions
+def test_runTool_ask_user_cleans_questions():
+    context = optimizer.ToolContext(maxQuestions=2, answered=["Who is it for?"])
+    toolInput = {"questions": [" How long? ", "", "who is it for?", "How long?", "Which tone?", "Which format?"],
+                 "reason": "r"}
+    content, isError, choice = optimizer.runTool(optimizer.ASK_TOOL, toolInput, "Write a post.", context)
+    assert isError is False
+    assert choice.questions == ["How long?", "Which tone?"]
+
+#ask_user with only answered questions is refused
+def test_runTool_ask_user_refuses_answered_questions():
+    context = optimizer.ToolContext(maxQuestions=2, answered=["Who is it for?"])
+    content, isError, choice = optimizer.runTool(optimizer.ASK_TOOL, {"questions": ["Who is it for?"], "reason": "r"},
+                                                 "Write a post.", context)
+    assert isError is True and choice is None
+
+#ask_user is offered only when there are questions to suggest
+def test_optimizePrompt_no_questions_no_ask(fakeClient):
+    messages = fakeClient([[toolUse(optimizer.ASK_TOOL, {"questions": ["Who?"], "reason": "r"})],
+                           submitTurn(makeRewrite("Write a poem."), "toolu_2")])
+    optimizer.optimizePrompt("Please write a poem.", questions=[], maxQuestions=3)
+    assert toolResults(messages, 1)[0]["is_error"] is True
+
+#A submission is checked against checkAgainst when set, so a number the person gave in an answer may be used
+def test_submission_checked_against_answers():
+    prompt = "Please write a blog post about remote work.\n\nHow long should it be? 300 words"
+    context = optimizer.ToolContext(checkAgainst="Please write a blog post about remote work.\n\n300 words")
+    rewrite = makeRewrite("Write a 300-word blog post about remote work.")
+    assert optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), "Write a blog post.")[1] is True
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), prompt, context)
+    assert isError is False, content
+
+#The message lists the answers, the questions that may be asked and the local rewrite, before the prompt
+def test_buildUserMessage_with_offers():
+    context = optimizer.ToolContext(localRewrite="Write a poem.", maxQuestions=2)
+    message = optimizer.buildUserMessage("Please write a poem.", [], answers=[optimizer.Answer("About what?", "rain")],
+                                         questions=["How long?"], context=context, localSaved=3)
+    assert "- About what? -> rain" in message
+    assert "at most 2" in message and "- How long?" in message
+    assert "<local_rewrite>\nWrite a poem.\n</local_rewrite>" in message and "saves 3 tokens" in message
+    assert message.endswith("PROMPT TO OPTIMIZE:\nPlease write a poem.")
+
+#Without offers, none of those sections are added
+def test_buildUserMessage_without_offers():
+    message = optimizer.buildUserMessage("Write a poem.", [], questions=["How long?"])
+    assert message == "PROMPT TO OPTIMIZE:\nWrite a poem."
 
 #Every tool is strict, and submit_rewrite takes exactly the Rewrite fields
 def test_tools_are_strict():
