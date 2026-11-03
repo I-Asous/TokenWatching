@@ -146,3 +146,41 @@ def test_percentile():
     assert eval_baseline.percentile([], 50) is None
     assert eval_baseline.percentile([1, 2, 3, 4], 50) == 2
     assert eval_baseline.percentile(list(range(1, 101)), 95) == 95
+
+
+#Every model the agents call has a price, so the eval's pipeline cost leaves nothing out
+def test_loadPricing_prices_the_agents_models():
+    prices, savedTokenPrice = eval_baseline.loadPricing()
+    for model in (eval_baseline.optimizer.OPTIMIZER_MODEL, eval_baseline.auditor.REVIEW_MODEL, "claude-sonnet-4-6"):
+        assert model in prices, model
+    sonnet = prices["claude-sonnet-5-5"]
+    assert sonnet["input_tokens"] == pytest.approx(2 / 1_000_000)
+    assert sonnet["cache_read_input_tokens"] == pytest.approx(0.2 / 1_000_000)
+    assert sonnet["cache_creation_input_tokens"] == pytest.approx(2.5 / 1_000_000)
+    assert savedTokenPrice == pytest.approx(2 / 1_000_000)
+    assert eval_baseline.loadPricing("claude-opus-5-5")[1] == pytest.approx(4 / 1_000_000)
+    with pytest.raises(KeyError):
+        eval_baseline.loadPricing("no-such-model")
+
+
+def test_summarize_costs():
+    pricing = ({"m": {"input_tokens": 1.0, "output_tokens": 2.0, "cache_read_input_tokens": 0.5,
+                      "cache_creation_input_tokens": 3.0}}, 0.25)
+    base = {"category": "filler", "expect": "optimize", "expectMet": True, "missingMustKeep": [],
+            "rewriteProblems": [], "originalTokens": 20, "percentSaved": 0.0, "attemptPassed": [],
+            **eval_baseline.summarizeCalls([])}
+    usage = {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1}
+    records = [
+        {**base, "id": "a", "outcome": "optimized", "tokensSaved": 8, "llmCalls": 2, "latencyMs": 3000,
+         "tokensPerModel": {"m": usage, "unknown-model": {"input_tokens": 5}}},
+        {**base, "id": "b", "outcome": "unchanged", "tokensSaved": 0, "latencyMs": 10},
+    ]
+    summary = eval_baseline.summarize(records, pricing)
+    assert summary["pipelineCostUsd"] == 7.0  #1 + 2 + 2*0.5 + 3, the unpriced model left out
+    assert summary["unpricedModels"] == ["unknown-model"]
+    assert summary["pipelineCostPerRunUsd"] == 3.5
+    assert summary["pipelineCostPerLLMRunUsd"] == 7.0
+    assert summary["savedValueUsd"] == 2.0
+    assert summary["netSavingsUsd"] == -5.0
+    assert summary["breakEvenSends"] == 3.5
+    assert eval_baseline.summarize(records[1:], pricing)["breakEvenSends"] is None

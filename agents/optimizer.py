@@ -245,6 +245,8 @@ Remove:
 - Hedging and preamble ("I was wondering if maybe", "sorry to bother you", backstory that doesn't affect the answer).
 - Instructions that repeat each other. Keep one clear version.
 - Wordy phrasing that a direct instruction says just as well.
+- Long phrases with a shorter common equivalent ("in order to" -> "to", "due to the fact that" -> "because", "at this point in time" -> "now"). Never swap in an abbreviation or a rare word: it often splits into more tokens.
+- Extra blank lines and repeated punctuation ("!!!", "..."), outside code and quoted text.
 
 Never change, and copy exactly:
 - Code, URLs, file paths, quoted text, numbers and units, and names.

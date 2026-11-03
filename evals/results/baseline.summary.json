@@ -77,5 +77,16 @@
       "cache_read_input_tokens": 271888,
       "cache_creation_input_tokens": 23745
     }
-  }
+  },
+  "pipelineCostUsd": 0.58643,
+  "pipelineCostPerRunUsd": 0.004887,
+  "pipelineCostPerLLMRunUsd": 0.013963,
+  "pipelineCostPerModelUsd": {
+    "claude-sonnet-4-6": 0.314472,
+    "claude-sonnet-5-5": 0.271958
+  },
+  "unpricedModels": [],
+  "savedValueUsd": 0.001188,
+  "netSavingsUsd": -0.585242,
+  "breakEvenSends": 493.6
 }

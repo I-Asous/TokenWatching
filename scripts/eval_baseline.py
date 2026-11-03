@@ -9,6 +9,11 @@ LLM output varies between runs, so use --repeat to average over a few runs befor
 Usage:
 python3 scripts/eval_baseline.py [--label baseline] [--repeat 1] [--only id-or-category ...] [--target chatgpt|claude]
 python3 scripts/eval_baseline.py --compare evals/results/baseline.summary.json evals/results/phase1.summary.json
+python3 scripts/eval_baseline.py --summarize phase1 [--saved-price-model claude-opus-5-5]
+
+Costs come from config/prices.yaml: what the pipeline's own API calls cost, what the tokens it saved are worth
+on one send, the net of the two, and how many sends each saved prompt needs to pay the pipeline back.
+--summarize recomputes a run's summary from its saved records, with no API calls.
 
 Each run writes evals/results/<label>.jsonl (one record per prompt per repeat) and <label>.summary.json.
 """
@@ -21,6 +26,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 
 REPO = Path(__file__).resolve().parent.parent
@@ -37,6 +43,9 @@ from agents.tokens import DEFAULT_TARGET, TARGETS  # noqa: E402
 
 DEFAULT_CASES = REPO / "evals" / "prompts.jsonl"
 RESULTS_DIR = REPO / "evals" / "results"
+PRICES_FILE = REPO / "config" / "prices.yaml"
+#The usage fields an API call is billed for, as the recorder stores them
+USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 #The modules whose Anthropic client makes the pipeline's LLM calls, by the agent name they're recorded under
 LLM_AGENTS = {"auditor": auditor, "optimizer": optimizer, "validator": validator}
 OUTCOMES = ("optimized", "fillerOnly", "unchanged", "ask", "error", "crash")
@@ -46,6 +55,34 @@ EXPECTED_OUTCOMES = {
     "unchanged": {"unchanged"},
     "ask": {"ask"},
 }
+
+
+"""
+* @brief Loads the prices the eval's costs are computed with, from config/prices.yaml.
+* @post
+* 1. Returns (prices, savedTokenPrice). prices maps each model to its USD price per token for every
+*    USAGE_KEYS field: cache reads are the input price less cache_read_discount, cache writes the input
+*    price times cache_write_multiplier (the agents use the 5-minute cache).
+* 2. savedTokenPrice is the input price per token of savedModel, or of the file's saved_token_model:
+*    what one token cut from a person's prompt is worth on a single send.
+* 3. An unknown savedModel raises a KeyError naming it.
+"""
+def loadPricing(savedModel: str | None = None, path: Path = PRICES_FILE) -> tuple[dict[str, dict[str, float]], float]:
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    modifiers = config["modifiers"]
+    prices = {}
+    for model, price in config["models"].items():
+        inputPrice = price["input"] / 1_000_000
+        prices[model] = {
+            "input_tokens": inputPrice,
+            "output_tokens": price["output"] / 1_000_000,
+            "cache_read_input_tokens": inputPrice * (1 - modifiers["cache_read_discount"]),
+            "cache_creation_input_tokens": inputPrice * modifiers["cache_write_multiplier"],
+        }
+    savedModel = savedModel or config["saved_token_model"]
+    if savedModel not in prices:
+        raise KeyError(f"No price for {savedModel} in {path.name}")
+    return prices, prices[savedModel]["input_tokens"]
 
 
 def loadCases(path: Path) -> list[dict]:
@@ -218,12 +255,25 @@ def mean(values: list[float]) -> float | None:
     return round(statistics.fmean(values), 2) if values else None
 
 
+#USD, rounded so a fraction of a cent still shows
+def usd(amount: float) -> float:
+    return round(amount, 6)
+
+
 """
 * @brief Turns every record from a run into the numbers to compare between runs.
 * @post Rates are fractions (0-1) rounded to 3 places, None when nothing could be measured. The same
 * keys are always present, so two summaries can be compared key by key.
+* Costs use pricing (loadPricing, read from config/prices.yaml when not given):
+* 1. pipelineCostUsd is what the run's API calls cost, from each model's token usage. A model with usage
+*    but no price is listed in unpricedModels and left out of the cost, so the cost is then too low.
+*    Calls that raised (timeouts) report no usage, so they're never counted.
+* 2. savedValueUsd is totalTokensSaved at the saved-token price, for one send of each prompt.
+* 3. netSavingsUsd is savedValueUsd minus pipelineCostUsd, and breakEvenSends how many times each
+*    optimized prompt would have to be sent for the savings to cover the pipeline (None if nothing was saved).
 """
-def summarize(records: list[dict]) -> dict:
+def summarize(records: list[dict], pricing: tuple[dict[str, dict[str, float]], float] | None = None) -> dict:
+    prices, savedTokenPrice = pricing or loadPricing()
     ran = [record for record in records if record["outcome"] != "crash"]
     optimized = [record for record in ran if record["outcome"] in ("optimized", "fillerOnly")]
     withExpect = [record for record in ran if record.get("expect")]
@@ -241,6 +291,14 @@ def summarize(records: list[dict]) -> dict:
             for key, value in usage.items():
                 tokensPerModel[model][key] += value
 
+    costPerModel = {model: sum(usage.get(key, 0) * prices[model][key] for key in USAGE_KEYS)
+                    for model, usage in tokensPerModel.items() if model in prices}
+    unpricedModels = sorted(model for model, usage in tokensPerModel.items()
+                            if model not in prices and any(usage.values()))
+    pipelineCost = sum(costPerModel.values())
+    totalTokensSaved = sum(record["tokensSaved"] for record in ran)
+    savedValue = totalTokensSaved * savedTokenPrice
+
     return {
         "runs": len(records),
         "outcomes": {outcome: outcomes.get(outcome, 0) for outcome in OUTCOMES},
@@ -249,7 +307,7 @@ def summarize(records: list[dict]) -> dict:
         "expectMisses": sorted({record["id"] for record in withExpect if not record["expectMet"]}),
         "optimizedRate": rate(len(optimized), len(ran)),
         "totalOriginalTokens": sum(record["originalTokens"] for record in ran),
-        "totalTokensSaved": sum(record["tokensSaved"] for record in ran),
+        "totalTokensSaved": totalTokensSaved,
         "meanPercentSavedAll": mean([record["percentSaved"] for record in ran]),
         "meanPercentSavedOptimized": mean([record["percentSaved"] for record in optimized]),
         "mustKeepViolations": sorted({record["id"] for record in ran if record["missingMustKeep"]}),
@@ -274,6 +332,14 @@ def summarize(records: list[dict]) -> dict:
         "apiErrors": sum(len(record["callErrors"]) for record in records),
         "crashes": sorted({record["id"] for record in records if record["outcome"] == "crash"}),
         "tokensPerModel": {model: dict(usage) for model, usage in sorted(tokensPerModel.items())},
+        "pipelineCostUsd": usd(pipelineCost),
+        "pipelineCostPerRunUsd": usd(pipelineCost / len(records)) if records else None,
+        "pipelineCostPerLLMRunUsd": usd(pipelineCost / len(llmLatencies)) if llmLatencies else None,
+        "pipelineCostPerModelUsd": {model: usd(cost) for model, cost in sorted(costPerModel.items())},
+        "unpricedModels": unpricedModels,
+        "savedValueUsd": usd(savedValue),
+        "netSavingsUsd": usd(savedValue - pipelineCost),
+        "breakEvenSends": round(pipelineCost / savedValue, 1) if savedValue else None,
     }
 
 
@@ -307,10 +373,23 @@ def main():
                         help=f"LLM whose tokenizer is used for counts (default: {DEFAULT_TARGET})")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BEFORE", "AFTER"),
                         help="compare two summary files instead of running")
+    parser.add_argument("--summarize", metavar="LABEL",
+                        help="rewrite LABEL's summary from its saved records instead of running (no API calls), "
+                             "e.g. to add costs to an older run or reprice it")
+    parser.add_argument("--saved-price-model", metavar="MODEL",
+                        help="model in config/prices.yaml whose input price values a saved token "
+                             "(default: the file's saved_token_model)")
     args = parser.parse_args()
 
     if args.compare:
         compare(*args.compare)
+        return
+
+    pricing = loadPricing(args.saved_price_model)
+    if args.summarize:
+        recordsPath = RESULTS_DIR / f"{args.summarize}.jsonl"
+        records = [json.loads(line) for line in recordsPath.read_text(encoding="utf-8").splitlines() if line.strip()]
+        writeSummary(records, RESULTS_DIR / f"{args.summarize}.summary.json", pricing)
         return
 
     cases = loadCases(args.cases)
@@ -340,15 +419,25 @@ def main():
                     sys.exit("\nStopped: the Anthropic API rejected the key (401). If ANTHROPIC_API_KEY is "
                              "exported in your shell, it's used instead of the one in .env.")
 
-    summary = summarize(records)
-    summaryPath.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print()
-    printSummary(summary)
-    print(f"\nRecords: {recordsPath.relative_to(REPO)}\nSummary: {summaryPath.relative_to(REPO)}")
+    summary = writeSummary(records, summaryPath, pricing)
+    print(f"\nRecords: {recordsPath.relative_to(REPO)}")
     #A failed call falls back to the original or local rewrite, so the run still finishes and looks plausible
     if summary["apiErrors"]:
         print(f"\nWARNING: {summary['apiErrors']} API calls failed; these numbers don't measure the agents. "
               "See callErrors in the records.")
+
+
+#Summarizes the records, writes the summary file and prints it, warning about any model it couldn't price
+def writeSummary(records: list[dict], summaryPath: Path, pricing: tuple[dict[str, dict[str, float]], float]) -> dict:
+    summary = summarize(records, pricing)
+    summaryPath.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print()
+    printSummary(summary)
+    print(f"\nSummary: {summaryPath.relative_to(REPO)}")
+    if summary["unpricedModels"]:
+        print(f"\nWARNING: no price in {PRICES_FILE.name} for {', '.join(summary['unpricedModels'])}; "
+              "pipelineCostUsd leaves their calls out.")
+    return summary
 
 
 if __name__ == "__main__":
