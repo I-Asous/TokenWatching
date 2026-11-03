@@ -117,9 +117,12 @@ def test_token_for_another_origin_rejected(client, db):
     pytest.param(make_token(drop=("azp",)), id="azp-missing"),
 ])
 def test_valid_token_accepted_with_token_identity(client, db, token):
-    # the user being acted on comes from the token, never from the request
+    # the user being acted on comes from the token, never from the request: /prompts reads through a
+    # supabase client built from the caller's own token, so RLS limits it to their rows
     assert call_verified(client, token).status_code == 200
-    assert db.calls == [("delete_user", ("user_me",))]
+    [(name, (userClient,))] = db.calls
+    assert name == "get_user_input_prompts"
+    assert userClient.token == token
 
 
 def test_orchestrator_rejects_bad_token(client, db, monkeypatch):
