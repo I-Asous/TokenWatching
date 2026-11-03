@@ -475,6 +475,16 @@ def test_runPipeline_local_rewrite_respects_optimize_false(fakeAgents, monkeypat
     result = orchestrator.runPipeline(PROMPT)
     assert result.wasOptimized is False
 
+#The local edits run even when the audit found nothing: a short repeat its fuzzy check skips is still cut for free
+def test_runPipeline_local_rewrite_runs_without_audit_issues(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=[])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline("Write a summary of the report for the team. Keep it under 200 words. "
+                                      "Keep it under 200 words.")
+    assert result.wasOptimized is True
+    assert result.finalPrompt == "Write a summary of the report for the team. Keep it under 200 words."
+    assert fake.optimizerCalls == [] and fake.validatorCalls == []
+
 #An Optimizer rewrite that only deleted filler passes without a Validator call
 def test_runPipeline_filler_only_rewrite_skips_validator(fakeAgents, monkeypatch):
     fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)])

@@ -82,7 +82,8 @@ def buildMustPreserve(prompt: str) -> list[str]:
     return items
 
 """
-* @brief The pass recorded for a rewrite that only deleted politeness and filler (isFillerOnlyEdit).
+* @brief The pass recorded for a rewrite that only made local edits (isFillerOnlyEdit): deleted politeness, filler
+* or a repeated sentence, or shortened a wordy phrase.
 * @post
 * 1. Nothing the prompt asks for was removed or reworded, so no Validator call is made.
 * 2. It's saved like any other validation, so the run's history shows why the Validator wasn't called.
@@ -93,7 +94,7 @@ def fillerOnlyValidation(prompt: str, rewrite: str) -> ValidationResult:
         optimizedPrompt=rewrite,
         qualityScore=10,
         passed=True,
-        reasoning="Only politeness and filler were deleted, nothing was reworded.",
+        reasoning="Only politeness, filler, repeated sentences and wordy phrases were cut, nothing was reworded.",
         reactTrace="Deletion-only edit checked locally, Validator not called.",
     )
 
@@ -250,13 +251,14 @@ def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, au
 * 0b. If the person answered clarifying questions (answers, from an earlier ask_user or the vagueness
 *    report), the answers are added to the prompt (clarifyPrompt) and the whole pipeline runs on that.
 *    The local checks compare rewrites against the prompt plus the answers alone (referencePrompt).
-* 1. The Auditor runs first; if it finds no issues, optimization is
-*    skipped entirely and the original prompt is returned unchanged. With answers, the Optimizer
-*    always runs, since working them into the prompt is what the person asked for.
-* 1b. If deleting the prompt's politeness and filler fixes everything the rule checks found
-*    (local_rewrite.py) and saves at least MIN_TOKENS_SAVED and MIN_PERCENT_SAVED, that rewrite
-*    is returned with no Optimizer or Validator call (not with answers, which need the Optimizer).
-* 1c. A prompt under MIN_TOKENS_FOR_OPTIMIZER tokens is returned unchanged with no Optimizer call
+* 1. The Auditor runs first.
+* 1b. If the local edits (local_rewrite.py: politeness and filler, word-for-word repeated sentences,
+*    wordy phrases) leave nothing for the rule checks to flag and save at least MIN_TOKENS_SAVED and
+*    MIN_PERCENT_SAVED, that rewrite is returned with no Optimizer or Validator call (not with answers,
+*    which need the Optimizer). This is tried even when the Auditor found no issues.
+* 1c. Otherwise, if the Auditor found no issues, the original prompt is returned unchanged with no LLM
+*    call. With answers, the Optimizer always runs, since working them into the prompt is what the person asked for.
+* 1d. A prompt under MIN_TOKENS_FOR_OPTIMIZER tokens is returned unchanged with no Optimizer call
 *    (unless it has answers).
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues, the type's rules and the list of what this prompt must keep (buildMustPreserve),
@@ -264,7 +266,7 @@ def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, au
 *    It submits through a tool and revises after any refusal (see optimizer.py), and only
 *    returns a rewrite that passes the local checks below.
 * 2b. The Optimizer may instead choose one of two other tools:
-*    - use_local_rewrite, offered when deleting politeness and filler saves enough but leaves other
+*    - use_local_rewrite, offered when the local edits save enough but leave other
 *      issues. That rewrite is accepted with no Validator call.
 *    - ask_user, offered when the vagueness report has questions and fewer than MAX_ANSWERED_QUESTIONS
 *      have been answered. No rewrite is made: the result has needsClarification set and the
@@ -316,15 +318,17 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
     #Read from the answers too, so a gap they filled isn't suggested as a question again
     vagueness = findVagueness(reference)
 
-    if not profile.optimize or (not auditResult.issues and not answers):
+    if not profile.optimize:
         orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes)
         hook.finishJob(orchestrationResult)
         return orchestrationResult
 
-    #Deleting politeness and filler is free and can't change the request. When it fixes everything the
-    #rule checks found, it's the whole rewrite: neither the Optimizer nor the Validator is called.
-    #One that leaves other issues is offered to the Optimizer, and is the fallback if no LLM rewrite passes.
-    #One that saves too little goes to the Optimizer instead, same bar as an Optimizer rewrite
+    #The local edits (politeness and filler, repeated sentences, wordy phrases) are free and can't change the request.
+    #When they fix everything the rule checks found, they're the whole rewrite: neither the Optimizer nor the
+    #Validator is called. They're tried even when the audit found nothing, since a word-for-word repeat too short
+    #for the audit's repeat check still saves tokens. One that leaves other issues is offered to the Optimizer, and
+    #is the fallback if no LLM rewrite passes. One that saves too little goes to the Optimizer instead, same bar
+    #as an Optimizer rewrite
     localResult = localRewrite(prompt, target, profile.skipChecks, requireClean=False)
     if localResult and answers:
         localResult = withAnswers(localResult, clarified, answers, target)
@@ -338,7 +342,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         hook.finishJob(orchestrationResult)
         return orchestrationResult
 
-    if auditResult.token_count < MIN_TOKENS_FOR_OPTIMIZER and not answers:
+    if (not auditResult.issues or auditResult.token_count < MIN_TOKENS_FOR_OPTIMIZER) and not answers:
         orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes)
         hook.finishJob(orchestrationResult)
         return orchestrationResult

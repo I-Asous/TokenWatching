@@ -161,3 +161,14 @@ def test_auditPrompt_llm_review_gate(monkeypatch, tokens, reviewed):
     monkeypatch.setattr(auditor, "runRuleCheck", lambda text, token_count, skipChecks: [])
     monkeypatch.setattr(auditor, "llmReview", lambda text: ["Repeats the same instruction twice."])
     assert auditor.auditPrompt("Write a report.").issues == (["Repeats the same instruction twice."] if reviewed else [])
+
+
+#Wordy phrases are flagged once shortening them saves MIN_REMOVABLE_TOKENS, the same bar as filler
+def test_findWordyPhrases_flags_enough_savings():
+    issue = auditor.findWordyPhrases("Due to the fact that the API is able to time out, add retries prior to the release.")
+    assert issue is not None and "'Due to the fact that' -> 'because'" in issue
+    assert auditor.findWordyPhrases("Add retries in order to handle timeouts.") is None
+
+#A phrase inside quoted text is the person's material, not their wording
+def test_findWordyPhrases_skips_quoted_text():
+    assert auditor.findWordyPhraseMatches('Translate "due to the fact that" and "in the event that" into French.') == []

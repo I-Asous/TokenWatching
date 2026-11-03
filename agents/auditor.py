@@ -71,6 +71,33 @@ POLITENESS_PATTERNS = [
     r"\bsorry (?:to bother you|for the trouble|if this is (?:a )?(?:dumb|stupid|silly) question)\b[!.]*",
 ]
 POLITENESS_RE = re.compile("|".join(f"(?:{pattern})" for pattern in POLITENESS_PATTERNS), re.IGNORECASE | re.MULTILINE)
+#Wordy phrases and a shorter form that means the same in any sentence, so they can be replaced without an LLM.
+#Phrases whose short form depends on the words around them ("be able to", "the majority of the") are left to the Optimizer
+WORDY_PHRASES = {
+    "in order to": "to",
+    "due to the fact that": "because",
+    "owing to the fact that": "because",
+    "despite the fact that": "although",
+    "in spite of the fact that": "although",
+    "at this point in time": "now",
+    "at the present time": "now",
+    "in the event that": "if",
+    "until such time as": "until",
+    "for the purpose of": "for",
+    "prior to": "before",
+    "in the near future": "soon",
+    "with regard to": "regarding",
+    "with regards to": "regarding",
+    "in regard to": "regarding",
+    "each and every": "every",
+    "first and foremost": "first",
+    "is able to": "can",
+    "are able to": "can",
+}
+#Longest first, so "in spite of the fact that" isn't matched as a shorter phrase inside it
+WORDY_PHRASE_RE = re.compile(r"\b(?:" + "|".join(r"\s+".join(map(re.escape, phrase.split()))
+                                                  for phrase in sorted(WORDY_PHRASES, key=len, reverse=True)) + r")\b",
+                             re.IGNORECASE)
 CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 #Local tokenizer for the estimate, even for Claude targets: it's only an estimate and shouldn't cost API calls
 ESTIMATE_ENCODING = "o200k_base"
@@ -172,11 +199,48 @@ def findRemovableFiller(text: str) -> str | None:
     return f"About {removable} of {total} tokens are politeness, hedging or filler that can be cut: {shown}"
 
 """
+* @brief Finds the wordy phrases (WORDY_PHRASES) a rewrite can shorten without changing the request.
+* @post
+* 1. Code blocks, quoted text and optional sentences are skipped (maskProtected), and so is everything from
+*    pasted material after a colon on, since that's the person's material, not their wording.
+* 2. Returns the matches in order; their offsets are offsets into text.
+* 3. The import is done here, not at the top: vagueness.py imports this module (for loadNlp).
+"""
+def findWordyPhraseMatches(text: str) -> list[re.Match]:
+    from agents.vagueness import PASTED_AFTER_COLON_RE  # pylint: disable=import-outside-toplevel
+    masked = maskProtected(text.replace("’", "'"))
+    pasted = PASTED_AFTER_COLON_RE.search(masked)
+    return list(WORDY_PHRASE_RE.finditer(masked, 0, pasted.start() if pasted else len(masked)))
+
+#The shorter form of a matched wordy phrase, whatever its capitals and spacing
+def shortFormOf(phrase: str) -> str:
+    return WORDY_PHRASES[" ".join(phrase.lower().split())]
+
+"""
+* @brief Flags a prompt when shortening its wordy phrases saves enough tokens to be worth a rewrite.
+* @post
+* 1. The saving is counted locally with ESTIMATE_ENCODING, each phrase against its shorter form.
+* 2. Flagged at MIN_REMOVABLE_TOKENS saved, the same bar as filler, so a single "in order to" doesn't send a
+*    prompt to the Optimizer for a 2-token cut.
+* 3. Returns the issue naming the phrases (up to MAX_SPANS_SHOWN), or None.
+"""
+def findWordyPhrases(text: str) -> str | None:
+    matches = findWordyPhraseMatches(text)
+    encoding = tiktoken.get_encoding(ESTIMATE_ENCODING)
+    saved = sum(len(encoding.encode(" " + match.group(0))) - len(encoding.encode(" " + shortFormOf(match.group(0))))
+                for match in matches)
+    if saved < MIN_REMOVABLE_TOKENS:
+        return None
+    pairs = list(dict.fromkeys(f"'{match.group(0)}' -> '{shortFormOf(match.group(0))}'" for match in matches))
+    return f"About {saved} tokens are wordy phrases with a shorter form: {', '.join(pairs[:MAX_SPANS_SHOWN])}"
+
+"""
 * @brief Runs fast, rule-based checks for common token-waste patterns.
 * @post
 * 1. The text's token-to-word ratio is checked for signs of verbiage meaning redundancy, or too wordy.
 * 2. Politeness, hedging and filler are flagged when enough tokens could be cut (findRemovableFiller).
 *    Words that make a request optional ("Maybe add tests") aren't counted, since cutting them changes the request.
+*    So are wordy phrases with a shorter form, when enough tokens could be saved (findWordyPhrases).
 * 3. Excessive blank lines/whitespace are detected.
 * 4. Readability (textstat) and grammar-based (spaCy) checks are added on.
 * 5. Checks named in skipChecks (prompt_types.py) are left out, since they misfire on that kind of
@@ -193,6 +257,10 @@ def runRuleCheck(text: str, token_count: int, skipChecks: frozenset[str] = froze
     filler = findRemovableFiller(text)
     if filler:
         issues.append(filler)
+
+    wordy = findWordyPhrases(text)
+    if wordy:
+        issues.append(wordy)
 
     if "\n\n\n" in text:
         issues.append("Unnecessary blank lines and or whitespace added")
