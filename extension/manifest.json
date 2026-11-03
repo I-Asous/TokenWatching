@@ -12,7 +12,7 @@
     ],
     "action": {
       "default_popup": "index.html",
-      "default_icon": "Token_Watching_Logo.png"
+      "default_icon": "Logo.png"
     },
     "content_scripts": [
       {

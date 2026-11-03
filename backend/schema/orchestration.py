@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from schema.context import ContextCreate
+
 class Orchestration(BaseModel):
     run_id: int
     user_id: str
@@ -37,3 +39,4 @@ class OrchestrationRequest(BaseModel):
     target: str
     # send the same prompt again with every answer so far to have them worked into the rewrite
     answers: list[ClarifyingAnswer] = Field(default_factory=list, max_length=10)
+    context: list[ContextCreate] = []

@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from agents.auditor import AuditResult
 from agents.optimizer import OptimizationResult
 from agents.validator import ValidationResult
+from schema.llm_call import LlmCall
 
 # this is because we import hooks in orchestrator, but also import orchestration result here...
 # and since one is unfinished, it crashes everything
@@ -19,6 +20,9 @@ class OrchestrationHooks:
     def saveAudit(self, result: AuditResult): pass
     def saveOptimization(self, result: OptimizationResult): pass
     def saveValidation(self, result: ValidationResult): pass
+
+    # LLM CALLS (for the future teehee)
+    def saveLLMCall(self, result: LlmCall): pass
 
     # USE WHEN THE ORCHESTRATOR IS DONE AND REACHED A CONCLUSION
     # this is in quotes bc of type checking t_t

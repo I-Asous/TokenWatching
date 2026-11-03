@@ -12,7 +12,7 @@ def read_user_prompts_with_optimized(db: UserDB):
     try:
         return prompt_w_optimized_repository.get_user_input_and_optimized_prompts(db)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=f"read_user_prompts_with_optimized: {exc}") from exc
 
 # return a specific users 1 prompt + optimized version of it
 @router.get("/{prompt_id}", response_model=list[PromptWithOptimized])
@@ -20,7 +20,7 @@ def read_user_prompt_with_optimized(db: UserDB, prompt_id: int):
     try:
         result = prompt_w_optimized_repository.get_user_prompt_w_optimized(db, prompt_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=f"read_user_prompt_with_optimized: {exc}") from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise HTTPException(status_code=404, detail="read_user_prompt_with_optimized: Prompt not found")
     return result
