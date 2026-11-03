@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from agents.orchestrator import OrchestrationResult
+from agents.optimizer import Answer
 from auth import current_user
 from schema.orchestration import OrchestrationRequest
 from service.orchestrator import RunOrchestrator

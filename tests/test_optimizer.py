@@ -303,6 +303,100 @@ def test_system_prompt_keeps_options_and_vagueness():
     assert "maybe add tests" in optimizer.OPTIMIZER_SYSTEM_PROMPT
     assert "keep it exactly as vague" in optimizer.OPTIMIZER_SYSTEM_PROMPT
 
+#Every tool ends the task, so a clean rewrite takes one API call
+def test_every_tool_ends_the_task(fakeClient):
+    assert [tool["name"] for tool in optimizer.OPTIMIZER_TOOLS] == [
+        optimizer.SUBMIT_TOOL, optimizer.LOCAL_TOOL, optimizer.ASK_TOOL]
+    messages = fakeClient("Write a poem.")
+    optimizer.callOptimizerLLM("Please write a poem.", [])
+    assert len(messages.requests) == 1
+
+LOCAL = OptimizationResult(originalPrompt="Hi! Please write a poem about rain. Thanks!",
+                           optimizedPrompt="Write a poem about rain.", originalTokens=14, optimizedTokens=7,
+                           tokensSaved=7, percentSaved=50.0, changes=["removed politeness and filler: 'Hi!'"])
+
+#The tools are sent on every call even when a run doesn't offer them, so the cached prefix never changes
+def test_tools_are_the_same_whatever_is_offered(fakeClient):
+    messages = fakeClient("Write a poem.")
+    optimizer.optimizePrompt("Please write a poem.", localResult=LOCAL, questions=["Q?"], maxQuestions=2)
+    assert messages.lastRequest["tools"] is optimizer.OPTIMIZER_TOOLS
+
+#Choosing the local rewrite returns it as is, marked "local"
+def test_optimizePrompt_local_choice(fakeClient):
+    fakeClient([[toolUse(optimizer.LOCAL_TOOL, {"reason": "Nothing more to cut."})]])
+    result = optimizer.optimizePrompt(LOCAL.originalPrompt, localResult=LOCAL)
+    assert result.action == "local"
+    assert result.optimizedPrompt == LOCAL.optimizedPrompt
+    assert result.tokensSaved == LOCAL.tokensSaved
+
+#Asking keeps the original prompt, saves nothing, and returns the questions
+def test_optimizePrompt_ask_user(fakeClient):
+    fakeClient([[toolUse(optimizer.ASK_TOOL, {"questions": ["What goes wrong?"], "reason": "Nothing attached."})]])
+    result = optimizer.optimizePrompt("Please fix this.", questions=["What goes wrong?"], maxQuestions=3)
+    assert result.action == "ask_user"
+    assert result.questions == ["What goes wrong?"]
+    assert result.optimizedPrompt == "Please fix this."
+    assert result.tokensSaved == 0
+
+#A tool the run doesn't offer is refused, and the model can still submit on the next turn
+@pytest.mark.parametrize("name, toolInput", [
+    (optimizer.LOCAL_TOOL, {"reason": "r"}),
+    (optimizer.ASK_TOOL, {"questions": ["Who is it for?"], "reason": "r"}),
+])
+def test_unoffered_tool_is_refused(fakeClient, name, toolInput):
+    messages = fakeClient([[toolUse(name, toolInput)], submitTurn(makeRewrite("Write a poem."), "toolu_2")])
+    result = optimizer.optimizePrompt("Please write a poem.")
+    assert toolResults(messages, 1)[0]["is_error"] is True
+    assert result.action == "rewrite"
+    assert result.optimizedPrompt == "Write a poem."
+
+#ask_user drops blank, repeated and already answered questions, and asks at most maxQuestions
+def test_runTool_ask_user_cleans_questions():
+    context = optimizer.ToolContext(maxQuestions=2, answered=["Who is it for?"])
+    toolInput = {"questions": [" How long? ", "", "who is it for?", "How long?", "Which tone?", "Which format?"],
+                 "reason": "r"}
+    content, isError, choice = optimizer.runTool(optimizer.ASK_TOOL, toolInput, "Write a post.", context)
+    assert isError is False
+    assert choice.questions == ["How long?", "Which tone?"]
+
+#ask_user with only answered questions is refused
+def test_runTool_ask_user_refuses_answered_questions():
+    context = optimizer.ToolContext(maxQuestions=2, answered=["Who is it for?"])
+    content, isError, choice = optimizer.runTool(optimizer.ASK_TOOL, {"questions": ["Who is it for?"], "reason": "r"},
+                                                 "Write a post.", context)
+    assert isError is True and choice is None
+
+#ask_user is offered only when there are questions to suggest
+def test_optimizePrompt_no_questions_no_ask(fakeClient):
+    messages = fakeClient([[toolUse(optimizer.ASK_TOOL, {"questions": ["Who?"], "reason": "r"})],
+                           submitTurn(makeRewrite("Write a poem."), "toolu_2")])
+    optimizer.optimizePrompt("Please write a poem.", questions=[], maxQuestions=3)
+    assert toolResults(messages, 1)[0]["is_error"] is True
+
+#A submission is checked against checkAgainst when set, so a number the person gave in an answer may be used
+def test_submission_checked_against_answers():
+    prompt = "Please write a blog post about remote work.\n\nHow long should it be? 300 words"
+    context = optimizer.ToolContext(checkAgainst="Please write a blog post about remote work.\n\n300 words")
+    rewrite = makeRewrite("Write a 300-word blog post about remote work.")
+    assert optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), "Write a blog post.")[1] is True
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), prompt, context)
+    assert isError is False, content
+
+#The message lists the answers, the questions that may be asked and the local rewrite, before the prompt
+def test_buildUserMessage_with_offers():
+    context = optimizer.ToolContext(localRewrite="Write a poem.", maxQuestions=2)
+    message = optimizer.buildUserMessage("Please write a poem.", [], answers=[optimizer.Answer("About what?", "rain")],
+                                         questions=["How long?"], context=context, localSaved=3)
+    assert "- About what? -> rain" in message
+    assert "at most 2" in message and "- How long?" in message
+    assert "<local_rewrite>\nWrite a poem.\n</local_rewrite>" in message and "saves 3 tokens" in message
+    assert message.endswith("PROMPT TO OPTIMIZE:\nPlease write a poem.")
+
+#Without offers, none of those sections are added
+def test_buildUserMessage_without_offers():
+    message = optimizer.buildUserMessage("Write a poem.", [], questions=["How long?"])
+    assert message == "PROMPT TO OPTIMIZE:\nWrite a poem."
+
 #Every tool is strict, and submit_rewrite takes exactly the Rewrite fields
 def test_tools_are_strict():
     for tool in optimizer.OPTIMIZER_TOOLS:
@@ -310,29 +404,6 @@ def test_tools_are_strict():
         assert tool["input_schema"]["additionalProperties"] is False
     submit = next(t for t in optimizer.OPTIMIZER_TOOLS if t["name"] == optimizer.SUBMIT_TOOL)
     assert set(submit["input_schema"]["required"]) == set(Rewrite.model_fields)
-
-#The model can check a draft, see the result, and then submit it
-def test_callOptimizerLLM_check_then_submit(fakeClient):
-    rewrite = "Write a short story about a dragon."
-    messages = fakeClient([
-        [toolUse("check_rewrite", {"rewrite": rewrite})],
-        submitTurn(makeRewrite(rewrite), "toolu_2"),
-    ])
-    result = optimizer.callOptimizerLLM("Please, could you write a short story about a dragon? Thanks!", [])
-
-    assert result.optimizedPrompt == rewrite
-    assert len(messages.requests) == 2
-    [checkResult] = toolResults(messages, 1)
-    assert checkResult["tool_use_id"] == "toolu_1"
-    assert checkResult["is_error"] is False
-    assert checkResult["content"].startswith("No problems found.")
-    assert "Tokens: original" in checkResult["content"]
-
-#check_rewrite lists what a draft dropped
-def test_check_rewrite_reports_problems():
-    report = optimizer.describeCheck("Write a bio in under 300 words.", "Write a bio.", "chatgpt")
-    assert report.startswith("Problems:\n- ")
-    assert "300" in report
 
 #A submission that drops a lock is refused with the reasons, and the fixed one is accepted
 def test_callOptimizerLLM_refuses_broken_submission(fakeClient):
@@ -367,30 +438,29 @@ def test_callOptimizerLLM_reminds_to_submit(fakeClient):
 #An unchanged submission isn't checked, since it is the original
 def test_runTool_unchanged_submission_skips_check():
     rewrite = makeRewrite("Write a bio in under 300 words.", unchanged=True, changes=[])
-    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), "Write a bio in under 300 words.", "chatgpt")
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, rewrite.model_dump(), "Write a bio in under 300 words.")
     assert (content, isError) == ("Submitted.", False)
     assert submitted.unchanged is True
 
-#count_tokens counts with the target's tokenizer, and an unknown tool is reported as an error
-def test_runTool_count_tokens_and_unknown_tool():
-    content, isError, _ = optimizer.runTool("count_tokens", {"text": "Hello, world"}, "", "chatgpt")
-    assert content == f"{optimizer.countTokens('Hello, world')} tokens" and isError is False
-    assert optimizer.runTool("delete_everything", {}, "", "chatgpt")[1] is True
+#A tool that no longer exists, or never did, is reported as an error
+@pytest.mark.parametrize("name", ["check_rewrite", "count_tokens", "delete_everything"])
+def test_runTool_unknown_tool(name):
+    assert optimizer.runTool(name, {}, "")[1] is True
 
 #An invalid submission is an error result, not a crash
 def test_runTool_invalid_submission():
-    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, {"optimizedPrompt": "x"}, "Write x.", "chatgpt")
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, {"optimizedPrompt": "x"}, "Write x.")
     assert isError is True and submitted is None
     assert content.startswith("Invalid submission")
 
 #Every tool call in one turn gets a result, all in one message
 def test_callOptimizerLLM_answers_parallel_calls_together(fakeClient):
+    broken = makeRewrite("Write a bio.").model_dump()
     messages = fakeClient([
-        [toolUse("count_tokens", {"text": "Write a poem."}, "toolu_1"),
-         toolUse("check_rewrite", {"rewrite": "Write a poem."}, "toolu_2")],
-        submitTurn(makeRewrite("Write a poem."), "toolu_3"),
+        [toolUse(optimizer.SUBMIT_TOOL, broken, "toolu_1"), toolUse(optimizer.SUBMIT_TOOL, broken, "toolu_2")],
+        submitTurn(makeRewrite("Write a bio in under 300 words."), "toolu_3"),
     ])
-    optimizer.callOptimizerLLM("Please write a poem.", [])
+    optimizer.callOptimizerLLM("Please write a bio in under 300 words.", [])
     assert [r["tool_use_id"] for r in toolResults(messages, 1)] == ["toolu_1", "toolu_2"]
 
 #Type rules are listed after the issues and before the prompt, one bullet per type

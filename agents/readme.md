@@ -101,20 +101,19 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 
 ## Agent 2 — Optimizer (`optimizer.py`)
 
-### Status: Now a tool-using agent: drafts, checks and revises its own rewrite before submitting it (10/27/2026). Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
+### Status: Now a tool-using agent: submits its rewrite through a tool and revises it after any refusal (10/30/2026). Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
 
-### Tool loop (10/27/2026)
+### Tool loop (10/27/2026, reduced 10/30/2026)
 
-The Optimizer used to make one structured-output call. Its rewrite was only checked afterwards, in the orchestrator, and a failure cost a whole retry. Now `callOptimizerLLM()` runs a manual tool-use loop with three tools:
+The Optimizer used to make one structured-output call. Its rewrite was only checked afterwards, in the orchestrator, and a failure cost a whole retry. Now `callOptimizerLLM()` runs a manual tool-use loop with one tool:
 
-- `count_tokens(text)` counts tokens with the target's tokenizer (`tokens.py`)
-- `check_rewrite(rewrite)` runs `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`) and returns every problem plus both token counts
-- `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop. A changed rewrite is checked first, and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again
+- `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop. A changed rewrite is checked with `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`), and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again
 
 Design decisions:
 
+- **No separate `check_rewrite` or `count_tokens` tools (removed 10/30):** `check_rewrite` ran the same checks as `submit_rewrite`, so checking first cost one extra API call and made the model write the rewrite twice. Without `count_tokens` the model can't measure a saving, so the orchestrator's minimum saving catches rewrites that save too little.
 - **Manual loop, not the SDK's tool runner:** the loop has to end on a submit call rather than on `end_turn`, and it needs a hard cap. A manual loop does both and is easy to fake in tests.
-- **`MAX_TOOL_TURNS = 6` API calls per run.** If no submission is accepted in time, the original prompt is kept. With `MAX_OPTIMIZATION_ATTEMPTS = 2` in the orchestrator, one prompt can cost up to 12 Optimizer calls, so watch the logged turn counts. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
+- **`MAX_TOOL_TURNS = 3` API calls per run:** a submission plus two fixes. If no submission is accepted in time, the original prompt is kept. With `MAX_OPTIMIZATION_ATTEMPTS = 2` in the orchestrator, one prompt can cost up to 6 Optimizer calls, so watch the logged turn counts. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
 - **No forced `tool_choice`:** Sonnet 5.5 returns a 400 for it. The system prompt says to always finish with `submit_rewrite`, and a turn with no tool call gets one reminder.
 - **Every tool is `strict: true`**, so tool inputs always match their schema. `submit_rewrite`'s schema is generated from `Rewrite`, so the two can't drift apart.
 - **Caching:** the system prompt keeps its breakpoint, and top-level `cache_control` caches the growing conversation, so each turn pays full price only for what's new.
@@ -376,7 +375,7 @@ The steps:
 
 1. Agent 1 audits the prompt. If it finds no issues, the original is returned and Agents 2 and 3 are not called.
 2. Agent 2 rewrites the prompt using Agent 1's issues.
-3. If the rewrite saves no tokens (unchanged or longer), the loop stops and the original is returned.
+3. If the rewrite saves under `MIN_TOKENS_SAVED` (5) tokens or `MIN_PERCENT_SAVED` (2%) of the prompt, the loop stops and the original is returned. A prompt under `MIN_TOKENS_FOR_OPTIMIZER` (15) tokens that the local rewrite can't fix skips Agent 2 altogether.
 4. Agent 3 checks the rewrite against the original. If it passes, the rewrite is returned and the loop stops.
 5. If it fails, the rewrite and Agent 3's reason are stored as a `RejectedAttempt` and Agent 2 tries again with every rejected attempt so far, up to `MAX_OPTIMIZATION_ATTEMPTS` (2) attempts in total. The Optimizer's tool loop already fixes local-check failures, so these attempts only retry Validator rejections.
 6. If no attempt passes, the original prompt is returned.
@@ -437,7 +436,7 @@ Pass `target="claude"` to count with Claude's tokenizer.
 - **No handling of API errors:** a rate limit or network error in any agent raises out of `runPipeline()`. It should return the original prompt instead. Only `tokens.py` and Agent 1's `llmReview()` catch `APIError` today
 - **`.env` is not loaded:** none of the agents call `load_dotenv()`, so the key has to be exported in the shell. Without it the first Claude call fails with "Could not resolve authentication method"
 - **A failed optimization costs more than it could save:** 3 attempts are 6 LLM calls (7 if Agent 1 ran its LLM review), all in sequence before the user gets an answer. `MAX_OPTIMIZATION_ATTEMPTS = 3` is a guess and should be tuned on real prompts
-- **No minimum saving:** only a rewrite that saves 0 tokens is skipped. One that saves 1 or 2 tokens still costs a Validator call and is offered to the user
+- ~~**No minimum saving:** only a rewrite that saves 0 tokens is skipped~~ **Fixed (10/30).** A rewrite must save at least 5 tokens and 2% of the prompt, and a prompt under 15 tokens skips the Optimizer. The percentage is low because a long code block with a polite wrapper can save many tokens but few percent. All three values are guesses, to tune on real runs
 - ~~**Whether to optimize depends only on Agent 1's rule checks for prompts under 500 tokens:** e.g. the dragon prompt has 2 filler hits (the threshold is 3), so no issue is flagged and the prompt is returned as-is~~ **Fixed (10/27)**, see Agent 1's limitations: the Auditor now estimates removable tokens, and the LLM review starts at 150 tokens
 - **No cost on the result:** the docstring mentions cost savings, but `OrchestrationResult` only has `tokensSaved` and `percentSaved`
 - **The rewrite is only kept for attempts that were validated:** a rewrite dropped for saving no tokens is not recorded in `attempts`
@@ -587,12 +586,7 @@ passed = verdict.score >= 6
 filler_hits = sum(len(re.findall(rf"\b{re.escape(w)}\b", text.lower())) for w in filler_words)
 ```
 
-**4. Add a minimum saving** in the orchestrator, so a rewrite that saves a token or two isn't validated or shown:
-
-```python
-if optimizationResult.percentSaved < MIN_PERCENT_SAVED:
-    break
-```
+**4. ~~Add a minimum saving~~** Done (10/30/2026): see the Orchestrator's known limitations.
 
 **5. Run the pipeline against the real API and turn the `__main__` cases into a live suite.** The Optimizer's 10 edge cases already print PASS/FAIL. As `pytest -m live` tests they could also record which attempt passed, tokens saved and latency. That gives real numbers for the open guesses: `MAX_OPTIMIZATION_ATTEMPTS`, the 1.6 ratio, the filler threshold of 3, and the pass score of 6. Also confirm that Agent 3's reply reaches the `SCORE:` line with `max_tokens=1024`.
 

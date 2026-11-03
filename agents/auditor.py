@@ -115,16 +115,16 @@ def estimateCost(token_count: int, rate_per_1k: float = 0.003) -> float:
 """
 * @brief Blanks out the parts of a prompt whose politeness isn't removable, keeping every offset in place.
 * @post
-* 1. Code blocks are blanked: they're the user's material, not their wording.
+* 1. Code blocks and quoted text ("Please do not touch") are blanked: they're the user's material, not their wording.
 * 2. Sentences that make a request optional ("Maybe add tests.", vagueness.py) are blanked, since
 *    cutting their "maybe" turns an option into a requirement.
 * 3. The import is done here, not at the top: vagueness.py imports this module (for loadNlp).
 """
 def maskProtected(text: str) -> str:
-    from agents.vagueness import findOptionalMarkers  # pylint: disable=import-outside-toplevel
+    from agents.vagueness import findOptionalMarkers, QUOTE_RE  # pylint: disable=import-outside-toplevel
     def blank(match: re.Match) -> str:
         return re.sub(r"\S", " ", match.group(0))
-    masked = CODE_BLOCK_RE.sub(blank, text)
+    masked = QUOTE_RE.sub(blank, CODE_BLOCK_RE.sub(blank, text))
     for sentence in findOptionalMarkers(text):
         masked = re.sub(re.escape(sentence), blank, masked)
     return masked
