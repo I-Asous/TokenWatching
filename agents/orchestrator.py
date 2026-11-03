@@ -6,7 +6,8 @@ from dataclasses import dataclass, field, replace
 from anthropic import APIError
 
 from agents.auditor import auditPrompt, runRuleCheck, AuditResult
-from agents.optimizer import optimizePrompt, findRewriteProblems, OptimizationResult, RejectedAttempt, Answer
+from agents.optimizer import (optimizePrompt, findRewriteProblems, rewriteResult, OptimizationResult,
+                              RejectedAttempt, Answer, Rewrite)
 from agents.validator import validatePrompt, ValidationResult
 from agents.locks import extractLocks
 from agents.local_rewrite import localRewrite, isFillerOnlyEdit
@@ -19,9 +20,10 @@ from agents.hooks.orchestrator import OrchestrationHooks
 
 logger = logging.getLogger(__name__)
 
-#The Optimizer already fixes local-check failures inside its own tool loop, so these attempts only retry
-#Validator rejections. Each one is up to MAX_TOOL_TURNS Optimizer calls plus a Validator call, all while the
-#user waits, so 2 (one retry). Tune on real runs
+#The Optimizer fixes local-check failures, too small a saving and Validator rejections inside its own tool
+#loop (SubmissionValidator, up to optimizer.MAX_VALIDATIONS), so a real run makes one attempt. A retry here
+#only happens when the Optimizer returns a rewrite it didn't validate; each costs up to MAX_TOOL_TURNS
+#Optimizer calls plus a Validator call while the user waits
 MAX_OPTIMIZATION_ATTEMPTS = 2
 #Lock kinds listed for the Optimizer up front. Code, URLs and steps are left out: the system prompt
 #already says to copy them exactly, and repeating a long code block would cost more than it saves
@@ -143,6 +145,52 @@ def withAnswers(localResult: OptimizationResult, clarified: str, answers: list[A
 #A rewrite saves enough to be worth a Validator call, a retry or offering it to the Optimizer
 def savesEnough(optimizationResult: OptimizationResult) -> bool:
     return optimizationResult.tokensSaved >= MIN_TOKENS_SAVED and optimizationResult.percentSaved >= MIN_PERCENT_SAVED
+
+"""
+* @brief Validates the Optimizer's submissions during its tool loop (passed to optimizePrompt as validate).
+* @post
+* 1. Each draft is saved through the hooks as an optimization, then its validation, in that order, so the
+*    backend links every verdict to the rewrite it judged, the same as a validated attempt outside the loop.
+* 2. A filler-only edit passes without a Validator call (fillerOnlyValidation). Anything else goes to the
+*    Validator with the prompt type's pass score and rules.
+* 3. Every validation is added to attempts; a failed one also to rejectedAttempts, a passed one to accepted
+*    (by rewrite text), so the orchestrator uses that verdict instead of validating the rewrite again.
+* 4. A failed Validator call sets apiFailed and is raised, so the run's error says the Validator failed.
+"""
+class SubmissionValidator:
+    def __init__(self, clarified: str, target: str, passScore: int, typeRules: str, hook: OrchestrationHooks,
+                 attempts: list[ValidationResult], rejectedAttempts: list[RejectedAttempt]):
+        self.clarified = clarified
+        self.target = target
+        self.passScore = passScore
+        self.typeRules = typeRules
+        self.hook = hook
+        self.attempts = attempts
+        self.rejectedAttempts = rejectedAttempts
+        self.accepted: dict[str, ValidationResult] = {}
+        self.apiFailed = False
+
+    def __call__(self, rewrite: Rewrite) -> ValidationResult:
+        draft = rewriteResult(self.clarified, rewrite, self.target)
+        self.hook.saveOptimization(draft)
+        self.hook.updateStage("validating")
+        if isFillerOnlyEdit(self.clarified, draft.optimizedPrompt):
+            validation = fillerOnlyValidation(self.clarified, draft.optimizedPrompt)
+        else:
+            try:
+                validation = validatePrompt(self.clarified, draft.optimizedPrompt,
+                                            passScore=self.passScore, typeRules=self.typeRules)
+            except APIError:
+                self.apiFailed = True
+                raise
+        self.hook.saveValidation(validation)
+        self.attempts.append(validation)
+        if validation.passed:
+            self.accepted[draft.optimizedPrompt] = validation
+        else:
+            self.rejectedAttempts.append(RejectedAttempt(draft.optimizedPrompt, validation.reasoning))
+        self.hook.updateStage("optimizing")
+        return validation
 
 #The result when no rewrite is used: the prompt as the person wrote it, with their answers if they gave any
 def unchangedResult(prompt: str, finalPrompt: str, auditResult: AuditResult, vagueness: VaguenessReport,
@@ -300,6 +348,8 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
     mustPreserve = buildMustPreserve(reference)
     maxQuestions = max(MAX_ANSWERED_QUESTIONS - len(answers), 0)
     error = None
+    submissionValidator = SubmissionValidator(clarified, target, profile.passScore, profile.optimizerRules, hook,
+                                              attempts, rejectedAttempts)
 
     for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
         hook.updateStage("optimizing")
@@ -312,11 +362,24 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
                                                 questions=vagueness.questions,
                                                 maxQuestions=maxQuestions,
                                                 answers=answers,
-                                                checkAgainst=reference if answers else None)
+                                                checkAgainst=reference if answers else None,
+                                                #Same bar as savesEnough below; with answers only a longer rewrite is refused
+                                                minTokensSaved=0 if answers else MIN_TOKENS_SAVED,
+                                                minPercentSaved=0.0 if answers else MIN_PERCENT_SAVED,
+                                                validate=submissionValidator)
         except APIError as apiError:
-            error = f"Optimizer call failed: {apiError}"
+            agent = "Validator" if submissionValidator.apiFailed else "Optimizer"
+            error = f"{agent} call failed: {apiError}"
             logger.warning("%s, returning the original prompt", error)
             break
+
+        #Validated during the Optimizer's loop: the draft and its verdict are already saved and in attempts
+        if (optimizationResult.action == "rewrite"
+                and optimizationResult.optimizedPrompt in submissionValidator.accepted):
+            orchestrationResult = acceptedResult(prompt, optimizationResult, auditResult, attempts, vagueness,
+                                                 promptTypes)
+            hook.finishJob(orchestrationResult)
+            return orchestrationResult
         hook.saveOptimization(optimizationResult)
 
         #The Optimizer chose to ask: nothing is rewritten until the person answers

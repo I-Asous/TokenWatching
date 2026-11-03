@@ -1,0 +1,64 @@
+{
+  "runs": 8,
+  "outcomes": {
+    "optimized": 6,
+    "fillerOnly": 2,
+    "unchanged": 0,
+    "ask": 0,
+    "error": 0,
+    "crash": 0
+  },
+  "expectMatchRate": 0.75,
+  "expectMatchByCategory": {
+    "code": 1.0,
+    "filler": 1.0,
+    "injection": 0.0,
+    "long": 1.0,
+    "multi": 1.0,
+    "non-english": 0.0
+  },
+  "expectMisses": [
+    "german",
+    "injection-polite"
+  ],
+  "optimizedRate": 1.0,
+  "totalOriginalTokens": 441,
+  "totalTokensSaved": 98,
+  "meanPercentSavedAll": 30.05,
+  "meanPercentSavedOptimized": 30.05,
+  "mustKeepViolations": [],
+  "rewriteProblemCases": [],
+  "validatorCalls": 12,
+  "attemptPassRate": 0.667,
+  "firstAttemptPassRate": 0.5,
+  "optimizerRuns": 8,
+  "optimizerTurnsMean": 1.75,
+  "optimizerTurnsMax": 2,
+  "optimizerTurnsDistribution": {
+    "1": 2,
+    "2": 6
+  },
+  "llmCallsMean": 3.25,
+  "llmCallsTotal": 26,
+  "latencyMsP50": 27188,
+  "latencyMsP95": 38805,
+  "latencyMsP50WithLLM": 27188,
+  "latencyMsP95WithLLM": 38805,
+  "latencyMsMax": 38805,
+  "apiErrors": 2,
+  "crashes": [],
+  "tokensPerModel": {
+    "claude-sonnet-4-6": {
+      "input_tokens": 6436,
+      "output_tokens": 4175,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    },
+    "claude-sonnet-5-5": {
+      "input_tokens": 44,
+      "output_tokens": 3764,
+      "cache_read_input_tokens": 58626,
+      "cache_creation_input_tokens": 9674
+    }
+  }
+}

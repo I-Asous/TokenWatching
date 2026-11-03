@@ -101,23 +101,29 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 
 ## Agent 2 — Optimizer (`optimizer.py`)
 
-### Status: Now a tool-using agent: submits its rewrite through a tool and revises it after any refusal (10/30/2026). Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
+### Status: The Validator and the minimum saving now run inside the tool loop, so the model revises after a Validator rejection in the same conversation (11/3/2026). Tool-using agent since 10/30/2026. Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
 
-### Tool loop (10/27/2026, reduced 10/30/2026)
+### Tool loop (10/27/2026, reduced 10/30/2026, Validator moved in 11/3/2026)
 
 The Optimizer used to make one structured-output call. Its rewrite was only checked afterwards, in the orchestrator, and a failure cost a whole retry. Now `callOptimizerLLM()` runs a manual tool-use loop with one tool:
 
-- `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop. A changed rewrite is checked with `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`), and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again
+- `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop once accepted. `findSubmissionProblems()` checks a changed rewrite, cheapest first, and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again:
+  1. `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`)
+  2. The saving, with the target's tokenizer, against `minTokensSaved` / `minPercentSaved` (the orchestrator passes `MIN_TOKENS_SAVED` / `MIN_PERCENT_SAVED`, or 0 with answers, which refuses only a longer rewrite). The refusal gives the measured saving, so the model can cut more or submit unchanged
+  3. `validate`, when the caller passes one: the orchestrator's `SubmissionValidator`, which runs the Validator (or passes a filler-only edit without it). A failed verdict is refused with the Validator's reasoning and how many reviews are left. At most `MAX_VALIDATIONS = 2` per run; once they're all used and the last failed, the loop stops
+- A submission identical to the prompt counts as unchanged, so it never spends a validation
 
 Design decisions:
 
-- **No separate `check_rewrite` or `count_tokens` tools (removed 10/30):** `check_rewrite` ran the same checks as `submit_rewrite`, so checking first cost one extra API call and made the model write the rewrite twice. Without `count_tokens` the model can't measure a saving, so the orchestrator's minimum saving catches rewrites that save too little.
+- **No separate `check_rewrite` or `count_tokens` tools (removed 10/30):** `check_rewrite` ran the same checks as `submit_rewrite`, so checking first cost one extra API call and made the model write the rewrite twice. Since 11/3 the saving is measured inside `submit_rewrite` instead, so the model gets the number without a separate tool.
+- **The Validator runs inside `submit_rewrite`, not as a `validate_rewrite` tool (11/3):** a separate tool would make the model write each rewrite twice, the same problem as `check_rewrite`. The 11/3 baseline (`evals/results/baseline.summary.json`) showed the extra Optimizer calls came from Validator rejections followed by a whole orchestrator retry (16 of 42 runs), not from local refusals (1 of 42). Now a rejection costs one more turn in the same cached conversation, with the rejected rewrite and the reasoning already in context.
+- **The orchestrator owns validation:** it passes `validate` (a `SubmissionValidator`), so the pass score, type rules, the filler-only skip, the hooks and the stage updates stay in `orchestrator.py`, and the Optimizer doesn't import `local_rewrite` (which imports it). Each draft is saved as an optimization before its validation, as before, so the backend links every verdict to the rewrite it judged
 - **Manual loop, not the SDK's tool runner:** the loop has to end on a submit call rather than on `end_turn`, and it needs a hard cap. A manual loop does both and is easy to fake in tests.
-- **`MAX_TOOL_TURNS = 3` API calls per run:** a submission plus two fixes. If no submission is accepted in time, the original prompt is kept. With `MAX_OPTIMIZATION_ATTEMPTS = 2` in the orchestrator, one prompt can cost up to 6 Optimizer calls, so watch the logged turn counts. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
+- **`MAX_TOOL_TURNS = 4` API calls per run** (3 before 11/3): a submission plus fixes after local, saving or Validator refusals. If no submission is accepted in time, the original prompt is kept. The orchestrator's outer retry no longer runs for a real Optimizer (it validates its own submissions), so one prompt costs at most 4 Optimizer calls and 2 Validator calls, down from 6 and 2. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
 - **No forced `tool_choice`:** Sonnet 5.5 returns a 400 for it. The system prompt says to always finish with `submit_rewrite`, and a turn with no tool call gets one reminder.
 - **Every tool is `strict: true`**, so tool inputs always match their schema. `submit_rewrite`'s schema is generated from `Rewrite`, so the two can't drift apart.
 - **Caching:** the system prompt keeps its breakpoint, and top-level `cache_control` caches the growing conversation, so each turn pays full price only for what's new.
-- **The orchestrator still runs `findRewriteProblems()`** as a safety net, and still retries when the Validator rejects a rewrite.
+- **The orchestrator still runs `findRewriteProblems()`** as a safety net, and still validates and retries a rewrite the Optimizer returns without having validated it (only possible for an Optimizer called without `validate`).
 
 ### What it does
 

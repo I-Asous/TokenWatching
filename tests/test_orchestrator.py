@@ -621,3 +621,96 @@ def test_runPipeline_local_rewrite_with_answers(fakeAgents, monkeypatch):
     assert fake.offers[0]["localResult"].optimizedPrompt == result.finalPrompt
     assert result.finalPrompt == "Write a blog post about remote work.\n\nWho is it for? Team leads at small startups"
     assert result.wasOptimized is True
+
+
+#Records every hook call in order, so tests can check what the backend would save and when
+class RecordingHooks(orchestrator.OrchestrationHooks):
+    def __init__(self):
+        self.events = []
+
+    def updateStage(self, status):
+        self.events.append(("stage", status))
+
+    def saveOptimization(self, result):
+        self.events.append(("optimization", result.optimizedPrompt))
+
+    def saveValidation(self, result):
+        self.events.append(("validation", result.passed))
+
+    def finishJob(self, result):
+        self.events.append(("finish", result.finalPrompt))
+
+#An Optimizer that submits each draft through the validate it was given, like the real tool loop,
+#and returns the first one that passes
+def validatingOptimizer(drafts, calls):
+    def optimizePrompt(prompt, issues, target, **offers):
+        calls.append(offers)
+        for draft in drafts:
+            rewrite = orchestrator.Rewrite(preservedConstraints=[], unchanged=False, optimizedPrompt=draft,
+                                           changes=["removed filler"])
+            if offers["validate"](rewrite).passed:
+                return orchestrator.rewriteResult(prompt, rewrite, target)
+        return orchestrator.rewriteResult(prompt, None, target)
+    return optimizePrompt
+
+#A rewrite validated in the Optimizer's loop is used as is: no second Validator call, and each draft is
+#saved before its verdict so the backend links them
+def test_runPipeline_uses_validation_from_optimizer_loop(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"], verdicts=[(False, "Dropped the dragon."), (True, "Kept everything.")])
+    calls = []
+    monkeypatch.setattr(orchestrator, "optimizePrompt", validatingOptimizer(["Write a story.", REWRITE], calls))
+    hooks = RecordingHooks()
+    result = orchestrator.runPipeline(PROMPT, hook=hooks)
+
+    assert fake.validatorCalls == ["Write a story.", REWRITE]
+    assert result.finalPrompt == REWRITE and result.wasOptimized is True
+    assert [attempt.passed for attempt in result.attempts] == [False, True]
+    saves = [event for event in hooks.events if event[0] != "stage"]
+    assert saves == [("optimization", "Write a story."), ("validation", False),
+                     ("optimization", REWRITE), ("validation", True), ("finish", REWRITE)]
+    assert len(calls) == 1
+
+#A failed validation in the loop is kept as a rejected attempt with the Validator's reason
+def test_submission_validator_records_rejections(fakeAgents):
+    fakeAgents(issues=["filler"], verdicts=[(False, "Dropped the dragon.")])
+    attempts, rejected = [], []
+    validate = orchestrator.SubmissionValidator(PROMPT, "chatgpt", 6, "", RecordingHooks(), attempts, rejected)
+    rewrite = orchestrator.Rewrite(preservedConstraints=[], unchanged=False, optimizedPrompt="Write a story.",
+                                   changes=[])
+    assert validate(rewrite).passed is False
+    assert rejected == [RejectedAttempt("Write a story.", "Dropped the dragon.")]
+    assert len(attempts) == 1 and validate.accepted == {}
+
+#A filler-only draft passes in the loop without a Validator call
+def test_submission_validator_skips_filler_only_edits(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"])
+    monkeypatch.setattr(orchestrator, "isFillerOnlyEdit", realIsFillerOnlyEdit)
+    validate = orchestrator.SubmissionValidator(PROMPT, "chatgpt", 6, "", RecordingHooks(), [], [])
+    rewrite = orchestrator.Rewrite(preservedConstraints=[], unchanged=False, optimizedPrompt=REWRITE, changes=[])
+    assert validate(rewrite).passed is True
+    assert fake.validatorCalls == []
+
+#A Validator call that fails inside the Optimizer's loop is reported as a Validator failure
+def test_runPipeline_validator_error_in_loop(fakeAgents, monkeypatch):
+    fakeAgents(issues=["filler"])
+    def fail(*args, **kwargs):
+        raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    monkeypatch.setattr(orchestrator, "validatePrompt", fail)
+    monkeypatch.setattr(orchestrator, "optimizePrompt", validatingOptimizer([REWRITE], []))
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert result.finalPrompt == PROMPT and result.wasOptimized is False
+    assert result.error.startswith("Validator call failed")
+
+#The Optimizer is given the same minimum saving as savesEnough, or only "not longer" with answers
+def test_runPipeline_passes_minimum_saving(fakeAgents):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)], verdicts=[(True, "Fine.")])
+    orchestrator.runPipeline(PROMPT)
+    assert fake.offers[0]["minTokensSaved"] == orchestrator.MIN_TOKENS_SAVED
+    assert fake.offers[0]["minPercentSaved"] == orchestrator.MIN_PERCENT_SAVED
+    assert isinstance(fake.offers[0]["validate"], orchestrator.SubmissionValidator)
+
+    #REWRITE drops the answers, so the safety net retries once; only the first call's offers matter
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)] * 2, verdicts=[(True, "Fine.")])
+    orchestrator.runPipeline(PROMPT, answers=ANSWERS)
+    assert (fake.offers[0]["minTokensSaved"], fake.offers[0]["minPercentSaved"]) == (0, 0.0)
