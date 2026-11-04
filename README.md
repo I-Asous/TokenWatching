@@ -104,7 +104,7 @@ TokenWatching/
 ├── agents/                     # Agent pipeline (Python)
 │   ├── auditor.py              # Agent 1: token count, cost estimate, waste issues (rules, textstat, spaCy, Haiku review), severity
 │   ├── optimizer.py            # Agent 2: rewrites the prompt to cut tokens, reports tokens/percent saved
-│   ├── validator.py            # Agent 3: ReAcT-structured check that the rewrite preserves intent (score 1-10, pass/fail)
+│   ├── validator.py            # Agent 3: structured check that the rewrite preserves intent (what was lost, score 1-10)
 │   ├── locks.py                # Local lock check: rejects rewrites that drop code, URLs, rules or steps
 │   ├── local_rewrite.py        # Free rewrite that deletes politeness/filler, and the filler-only check that skips the Validator
 │   ├── orchestrator.py         # runPipeline(): Auditor → Optimizer → lock check → Validator, with retries

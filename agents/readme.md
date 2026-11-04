@@ -101,7 +101,7 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 
 ## Agent 2 — Optimizer (`optimizer.py`)
 
-### Status: The Validator and the minimum saving now run inside the tool loop, so the model revises after a Validator rejection in the same conversation (11/3/2026). Tool-using agent since 10/30/2026. Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
+### Status: Moved to `claude-haiku-5-5` (11/4/2026). The Validator and the minimum saving now run inside the tool loop, so the model revises after a Validator rejection in the same conversation (11/3/2026). Tool-using agent since 10/30/2026. Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
 
 ### Tool loop (10/27/2026, reduced 10/30/2026, Validator moved in 11/3/2026)
 
@@ -178,12 +178,12 @@ Output:
 - **Field order is generation order:** `Rewrite` is `preservedConstraints` → `unchanged` → `optimizedPrompt` → `changes`. The model has to list what it must keep and decide whether to rewrite at all before it writes anything.
 - **An explicit `unchanged` flag:** already-direct prompts are marked unchanged and the original is kept, even if the model also wrote a rewrite. This replaced relying on the model to copy the prompt back exactly.
 - **System prompt explains the stakes, then gives rules:** it says the rewrite is a one-click replacement in a browser extension and that a changed meaning costs more trust than any tokens saved. Then four lists: what to remove (greetings, hedging, repeated instructions, wordy phrasing), what to copy exactly (code, URLs, paths, quotes, numbers, names, negations, examples, step order, the prompt's language, context that changes the answer), what isn't worth an edit (synonym swaps, dropping only "please"), and how to answer.
-- **8 worked examples, one rule each** (`OPTIMIZER_EXAMPLES`): filler removal, hard constraints, code copied exactly, negations and answer-changing context, already direct, "please"-only, merged duplicate instructions, and a Spanish prompt that stays in Spanish. Two of the eight are `unchanged`, so the model doesn't learn to always rewrite. They are rendered as `<example><input>…</input><output>…JSON…</output></example>` so the model sees every field filled in.
+- **7 worked examples, one rule each** (`OPTIMIZER_EXAMPLES`): filler removal, hard constraints, code copied exactly, negations and answer-changing context, already direct, "please"-only, and merged duplicate instructions. The Spanish example was removed on 11/4/2026: non-English prompts no longer reach the Optimizer (see the Orchestrator section). Two of the seven are `unchanged`, so the model doesn't learn to always rewrite. They are rendered as `<example><input>…</input><output>…JSON…</output></example>` so the model sees every field filled in.
 - **Examples don't overlap the test prompts:** none of them reuse a prompt from the `__main__` cases, and a test enforces it, so passing those cases still means something.
 - **The prompt is treated as text, not instructions:** the system prompt says to rewrite or leave a prompt like "ignore previous instructions", never act on it.
 - **Rejected rewrites come back with their reason:** on a retry, each earlier rewrite is shown in `<rejected_rewrite>` tags with the Validator's reason, and the system prompt says to start again from the original, keep the cuts that were fine, restore what was lost, and never return a rejected rewrite again.
 - **Cached system prompt:** the system prompt is identical on every call (about 1,570 tokens by the `o200k_base` estimate), so it's sent with `cache_control: ephemeral`. Only the per-prompt text is in `messages`. Cache reads and writes are logged to confirm the cache is hit.
-- **Model moved to `claude-sonnet-5-5`** (`OPTIMIZER_MODEL`), because structured outputs weren't available on `claude-sonnet-4-6`.
+- **Model moved to `claude-sonnet-5-5`** (`OPTIMIZER_MODEL`), because structured outputs weren't available on `claude-sonnet-4-6`. **Then to `claude-haiku-5-5` (11/4/2026):** in the 120-run phase1 eval the Optimizer cost $0.28, more than half the pipeline's API spend, and Haiku 5.5 is 20x cheaper per token ($0.10/$0.50 vs $2/$10 per million). Rewriting a short prompt is a small task, and every submission is still checked locally and by the Validator. Effort stays `low` (Haiku's default is `medium`). Not yet confirmed with an eval run: go back to Sonnet if rewrites get worse.
 - **Same structure as Agent 1:** plain functions plus a data-only `OptimizationResult` dataclass, so the orchestrator can call `optimizePrompt()` the same way it calls `auditPrompt()`.
 - **Reuses `estimateCost()` from Agent 1** for the table, instead of a second copy of the rate.
 
@@ -206,7 +206,7 @@ Output:
 
 ### Known limitations / things to revisit
 
-- Model is a constant in the file (`OPTIMIZER_MODEL = "claude-sonnet-5-5"`), should move to config along with pricing. Agent 1's review uses `claude-haiku-5-5` and Agent 3 is still on `claude-sonnet-4-6`
+- Model is a constant in the file (`OPTIMIZER_MODEL = "claude-haiku-5-5"`), should move to config along with pricing. All three agents now use `claude-haiku-5-5`
 - `optimizePrompt()` on its own doesn't check that the rewrite kept every item in `preservedConstraints`. The list is the model's own, and nothing compares it to the rewrite. Inside the pipeline, Agent 3 checks the rewrite and the orchestrator falls back to the original if it fails
 - If the rewrite is longer, `optimizePrompt()` reports 0% saved but still returns the longer prompt. The orchestrator discards a rewrite that saves nothing (see the Orchestrator section)
 - The 10 edge cases in `__main__` (filler, concise, constraints, code, URL + quote, negation, injection, "please"-only, duplicates, Spanish) call the real API and print PASS/FAIL, but they aren't a pytest suite and don't run in CI
@@ -244,7 +244,7 @@ Offline, no API key needed. The fake client records the request and returns a ca
 
 ## Agent 3 — Validator (`validator.py`)
 
-### Status: Core logic working and tested in CI, called by the orchestrator (10/1/2026)
+### Status: Structured verdict (`lost`, `score`, `reason`) on `claude-haiku-5-5` at effort `low`, shorter system prompt (11/4/2026). Core logic working and tested in CI, called by the orchestrator (10/1/2026)
 
 ### What it does
 
@@ -274,10 +274,11 @@ print(result.qualityScore, result.passed, result.reasoning)
 
 - **Agent 3 is the safety net for Agent 2:** Agent 2 is told to keep meaning over length, but nothing checked that it did. Agent 3 checks it, so a shorter prompt that changes the result is caught before it reaches the user.
 - **Fixed score scale in the system prompt:** the score is an integer from 1 to 10, and each band (9–10, 6–8, 3–5, 1–2) describes what counts as a loss, e.g. a dropped constraint or example puts the rewrite at 3–5. This makes scores more consistent between runs than asking for a plain "rate this 1–10".
-- **ReAcT steps before the verdict:** the system prompt makes the model list the original's requirements (READ), check each one against the rewrite (ANSWER), quote what was lost (CITE) and decide whether the loss changes the output (THINK) before it writes `SCORE:`. The score is then based on specific findings instead of a general impression. This costs more output tokens on every validation.
+- **Losses listed before the score (11/4/2026):** the reply is a `Verdict` (structured output, `output_config.format`): `lost`, then `score`, then `reason`. Field order is generation order, so the model names what was dropped before it scores, which is what the ReAcT steps (READ, ANSWER, CITE, THINK) did in free text at about 300 output tokens a call. `passed` is computed in code: a score of at least 6 and nothing in `lost`. What was lost is added to the reason, since that's what the Optimizer's retry is told to fix.
+- **Politeness is never a requirement:** the system prompt lists what is never a requirement (greetings, thanks, politeness, hedging, filler, repeats, irrelevant backstory) and what is. The old prompt scored filler cuts 3-5 as a lost "tone": in phase1, `filler-summary` was rejected at 4, and the Optimizer's retry put "please" and "thanks" back.
 - **Strict by design:** the prompt says that a shorter prompt that changes meaning fails, even if it saves tokens. This matches the rule behind Agent 2.
 - **No LLM call for identical prompts:** if the rewrite matches the original (ignoring surrounding whitespace), it passes with a score of 10 without calling the API, following the "don't waste tokens to save tokens" idea from Agent 1.
-- **Parsing never crashes:** a reply that can't be parsed gives score 1 (the lowest score on the scale) and `passed = False`. An unreadable verdict counts as a fail, not a pass.
+- **An unusable reply is an error, not a fail:** a reply cut off at `max_tokens`, refused, with no text, or not a valid `Verdict` raises `ValidatorReplyError`. The orchestrator handles it like a failed API call: the run falls back and records the error, and nothing is sent to the Optimizer as a rejection reason. (Until 11/4/2026 such a reply was scored 1 and failed silently.)
 - **Same structure as Agents 1 and 2:** plain functions plus a data-only `ValidationResult` dataclass.
 
 ### Challenges + fixes
@@ -292,30 +293,32 @@ print(result.qualityScore, result.passed, result.reasoning)
 | Testing the validator's*judgment*, not just the code | The fake client only checks how a reply is handled, not whether Claude grades correctly                                                                                                      | The live tests use two known cases: a rewrite that only removes filler words must pass, and a rewrite that drops a word limit and a JSON format must fail. If the prompt or model changes and grading gets worse, these fail              |
 | Scores were based on a general impression | The prompt only asked for a score, a verdict and a reason, so `reactTrace` was almost always empty | Reworked the system prompt around the ReAcT steps (READ, ANSWER, CITE, THINK), which must be written before the `SCORE:` line. The scale also changed from 0–10 decimals to 1–10 integers |
 | Two offline tests failed after the ReAcT rework | The fallback score in `parseValidatorReply()` changed from 0 to 1 to match the new 1–10 scale, but `test_parseValidatorReply_unparseable_uses_defaults` and `test_parseValidatorReply_bad_score` still expected 0 | Updated both tests to expect 1. The docstring and the code now agree on the fallback |
+| Would crash on `claude-haiku-5-5` (11/4/2026) | Haiku 5.5 thinks by default, so the reply can start with a `thinking` block, and the reply was read as `response.content[0].text`. That raised `AttributeError`, which the orchestrator didn't catch. Thinking also counts toward `max_tokens` | The reply is read by block type. Effort is set to `low`, `max_tokens` raised to 4096, and an unusable reply raises `ValidatorReplyError` |
+| Validator calls timed out | In phase1, 15 of 45 calls on `claude-sonnet-4-6` hit the 10-second timeout while writing the ReAcT trace | Haiku 5.5 and a short JSON verdict instead of the trace (11/4/2026). Not yet confirmed with an eval run |
 | The reply would be cut off before the verdict | `max_tokens` was still 300, which was set when the reply was three lines. The ReAcT steps are longer than that, so the reply would end before `SCORE:` and every rewrite would parse as score 1 / fail | Raised `max_tokens` to 1024. Not confirmed with a live run yet: run `pytest -m live` with an API key to check |
 
 ### Known limitations / things to revisit
 
-- **`passed` comes from the model, not the score:** a reply like `SCORE: 4` / `PASSED: Yes` counts as a pass. The rule "pass only at 6 or higher" is only enforced by the prompt
-- **A cut-off reply looks the same as a bad rewrite:** if the reply still runs past `max_tokens` (now 1024), there is no `SCORE:` line and the result is score 1 / fail. `stop_reason` isn't checked, so the caller can't tell the two apart
-- `qualityScore` is declared as `int`, but the parser returns a `float` (e.g. 8.0)
-- Model is hardcoded (`claude-sonnet-4-6`). Agent 2 moved to `claude-sonnet-5-5` for structured outputs; moving Agent 3 the same way would replace the `SCORE:` / `PASSED:` / `REASON:` text parsing and fix the first three limitations in this list
-- The two prompts are sent as plain labeled text (`original prompt:` / `optimized prompt:`), not in tags, and the system prompt doesn't say to treat them as text only (Agent 2's does)
+- Model is hardcoded (`VALIDATOR_MODEL = "claude-haiku-5-5"`), should move to config along with pricing
 - The validator is a single LLM judge, so the same pair of prompts can score slightly differently between runs. Scores close to 6 are the least reliable
+- The live tests (`pytest -m live`) haven't been run against the structured verdict yet
 
 ### Tests (`tests/test_validator.py`, offline)
 
 | Test                                                   | Checks                                                                         |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `test_buildUserMessage_labels_both_prompts`          | Both prompts are included and labeled                                          |
-| `test_parseValidatorReply_well_formed`               | Score, passed and reason are parsed from a clean reply, and the trace is empty |
-| `test_parseValidatorReply_case_and_whitespace`       | Lowercase labels and extra whitespace still parse                              |
-| `test_parseValidatorReply_keeps_trace`               | Text before`SCORE:` is kept as the trace                                     |
-| `test_parseValidatorReply_unparseable_uses_defaults` | An unreadable reply gives score 1, a fail, and the default reason              |
-| `test_parseValidatorReply_bad_score`                 | A non-numeric score doesn't crash and keeps the default score of 1             |
-| `test_callValidatorLLM_sends_system_prompt`          | The validator system prompt and both prompts are sent                          |
+| `test_buildUserMessage_labels_both_prompts`          | Both prompts are included, each in its own tags                                |
+| `test_buildUserMessage_with_type_rules`              | Type rules come first, with the note that weakening one is a loss              |
+| `test_parseVerdict_*`                                | Nothing lost passes; a listed loss fails at any score and is added to the reason; blank losses are ignored; a score under 6 fails; an invalid reply raises |
+| `test_verdict_format_order`                          | The schema lists `lost` before `score`, with every field required              |
+| `test_system_prompt_politeness_is_not_a_requirement` | The system prompt says politeness isn't a requirement                          |
+| `test_callValidatorLLM_sends_request`                | System prompt, both prompts, the model, low effort and the verdict schema are sent |
+| `test_callValidatorLLM_reads_text_block`             | The verdict is read after a thinking block, and without one                    |
+| `test_callValidatorLLM_unusable_reply_raises`        | A reply cut off, refused or without text raises `ValidatorReplyError`          |
 | `test_validatePrompt_identical_skips_llm`            | Identical prompts pass with score 10 and make no API call                      |
 | `test_validatePrompt_uses_llm_verdict`               | A changed prompt uses the model's score, verdict, reason and trace             |
+| `test_validatePrompt_applies_pass_score`             | A prompt type's higher pass score is applied                                   |
+| `test_validatePrompt_pass_score_never_overrides_fail`| A listed loss never becomes a pass                                             |
 
 Live tests (`tests/test_validator_live.py`, run with `pytest -m live`, need `ANTHROPIC_API_KEY`): `test_filler_removal_passes`, `test_dropped_constraint_fails`.
 

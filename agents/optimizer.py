@@ -16,15 +16,17 @@ from agents.validator import ValidationResult
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=20.0)
 logger = logging.getLogger(__name__)
 
-#Sonnet 4.6 doesn't support structured outputs PLUS Sonnet 5.5 does and is mas cheaper
-OPTIMIZER_MODEL = "claude-sonnet-5-5"
+#Haiku 5.5 is 20x cheaper than Sonnet 5.5 ($0.10/$0.50 vs $2/$10 per million tokens) and faster. Rewriting a
+#short prompt is a small task, and every submission is still checked locally and by the Validator.
+#Go back to "claude-sonnet-5-5" if the eval shows worse rewrites
+OPTIMIZER_MODEL = "claude-haiku-5-5"
 #Most API calls in one optimizer run: a submission plus fixes after refusals, local or the Validator's.
 #Every call resends the conversation, so this also caps what one rewrite can cost
 MAX_TOOL_TURNS = 4
 #Most Validator calls in one run when the caller validates submissions (ToolContext.validate). Each takes
 #10-20 seconds while the person waits; 2 matches the orchestrator's old budget of one retry. Tune on real runs
 MAX_VALIDATIONS = 2
-#Sonnet 5.5 defaults to "high", which thinks longer than a few-sentence rewrite needs, and the user is waiting
+#Haiku 5.5 defaults to "medium", which thinks longer than a few-sentence rewrite needs, and the user is waiting
 #before hitting enter. "low" is safe here: submit_rewrite refuses anything findRewriteProblems rejects at any
 #effort, and the Validator still checks meaning. Step up to "medium" if live runs show worse rewrites
 OPTIMIZER_EFFORT = "low"

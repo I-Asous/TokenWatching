@@ -1,6 +1,7 @@
 """
 Offline unit tests for third agent
 """
+import json
 from types import SimpleNamespace
 import pytest
 from agents import validator
@@ -34,10 +35,14 @@ def fakeClient(monkeypatch):
         return fake.messages
     return install
 
-#Both prompts are included and labeled in the message
+#A reply as the structured output returns it
+def verdict(score, reason="Fine.", lost=()):
+    return json.dumps({"lost": list(lost), "score": score, "reason": reason})
+
+#Both prompts are included, each in its own tags
 def test_buildUserMessage_labels_both_prompts():
     message = validator.buildUserMessage("Please write a poem.", "Write a poem.")
-    assert message == "original prompt:\nPlease write a poem.\n\noptimized prompt:\nWrite a poem."
+    assert message == "<original>\nPlease write a poem.\n</original>\n\n<rewrite>\nWrite a poem.\n</rewrite>"
 
 #Type rules come first, one bullet per type, with the note that weakening one is a loss
 def test_buildUserMessage_with_type_rules():
@@ -45,80 +50,88 @@ def test_buildUserMessage_with_type_rules():
                                          typeRules="Code prompt: never change code.\nSecurity prompt: keep every rule.")
     assert "- Code prompt: never change code.\n- Security prompt: keep every rule." in message
     assert "meaningful loss (score 3-5)" in message
-    assert message.index("Code prompt") < message.index("original prompt:") < message.index("optimized prompt:")
+    assert message.index("Code prompt") < message.index("<original>") < message.index("<rewrite>")
 
 #The type rules reach the request sent to the LLM
 def test_validatePrompt_sends_type_rules(fakeClient):
-    messages = fakeClient("SCORE: 8\nPASSED: Yes\nREASON: Fine.")
+    messages = fakeClient(verdict(8))
     validator.validatePrompt("Please fix my code.", "Fix my code.", typeRules="Code prompt: never change code.")
     assert "- Code prompt: never change code." in messages.lastRequest["messages"][0]["content"]
 
-#A well-formed reply is parsed into score, passed and reason, with no trace
-def test_parseValidatorReply_well_formed():
-    reply = "SCORE: 8.5\nPASSED: Yes\nREASON: Only filler was removed."
-    score, passed, reason, trace = validator.parseValidatorReply(reply)
-    assert score == 8.5
-    assert passed is True
-    assert reason == "Only filler was removed."
-    assert trace == ""
+#A verdict with nothing lost and a passing score passes, and the trace says nothing was lost
+def test_parseVerdict_nothing_lost():
+    score, passed, reason, trace = validator.parseVerdict(verdict(8, "Only filler was removed."))
+    assert (score, passed, reason, trace) == (8, True, "Only filler was removed.", "Nothing lost.")
 
-#Field labels are matched case-insensitively and surrounding whitespace is ignored
-def test_parseValidatorReply_case_and_whitespace():
-    reply = "\n  score: 3\n  passed: no\n  reason: Dropped the word limit.  \n"
-    score, passed, reason, _ = validator.parseValidatorReply(reply)
-    assert score == 3.0
+#What was lost is added to the reason (what the Optimizer's retry is told) and to the trace
+def test_parseVerdict_lists_losses():
+    score, passed, reason, trace = validator.parseVerdict(verdict(4, "Dropped the word limit.", ["100-word limit"]))
+    assert score == 4
     assert passed is False
-    assert reason == "Dropped the word limit."
+    assert reason == "Dropped the word limit. Lost: 100-word limit."
+    assert trace == "Lost: 100-word limit"
 
-#Any text before SCORE is kept as the reasoning trace
-def test_parseValidatorReply_keeps_trace():
-    reply = "THINK: both ask for a dragon story.\nANSWER: same intent.\nSCORE: 9\nPASSED: Yes\nREASON: Same."
-    _, _, _, trace = validator.parseValidatorReply(reply)
-    assert trace == "THINK: both ask for a dragon story.\nANSWER: same intent."
-
-#A reply with no recognizable fields falls back to safe defaults
-def test_parseValidatorReply_unparseable_uses_defaults():
-    reply = "I think these prompts are pretty similar."
-    score, passed, reason, trace = validator.parseValidatorReply(reply)
-    assert score == 1
+#A listed loss fails the rewrite even when the score is 6 or more
+def test_parseVerdict_loss_fails_any_score():
+    _, passed, _, _ = validator.parseVerdict(verdict(7, "Mostly kept.", ["the knee injury"]))
     assert passed is False
-    assert reason == "Could not parse Agent 3, Validator, response."
-    assert trace == reply
 
-#A non-numeric score doesn't raise and keeps the default
-def test_parseValidatorReply_bad_score():
-    score, passed, _, _ = validator.parseValidatorReply("SCORE: high\nPASSED: Yes\nREASON: ok")
-    assert score == 1
+#Blank loss entries don't count as losses
+def test_parseVerdict_ignores_blank_losses():
+    _, passed, _, trace = validator.parseVerdict(verdict(9, lost=["", "  "]))
     assert passed is True
+    assert trace == "Nothing lost."
 
-#LLM call sends the validator system prompt and both prompts
-def test_callValidatorLLM_sends_system_prompt(fakeClient):
-    messages = fakeClient("SCORE: 7\nPASSED: Yes\nREASON: Fine.")
+#A score under 6 fails with nothing listed
+def test_parseVerdict_low_score_fails():
+    assert validator.parseVerdict(verdict(5))[1] is False
+
+#A reply that isn't a valid verdict raises instead of failing the rewrite with a made-up reason
+@pytest.mark.parametrize("reply", [
+    "SCORE: 8\nPASSED: Yes\nREASON: Fine.",
+    '{"score": 8, "reason": "Fine."}',
+    '{"lost": [], "score": "high", "reason": "Fine."}',
+])
+def test_parseVerdict_invalid_raises(reply):
+    with pytest.raises(validator.ValidatorReplyError):
+        validator.parseVerdict(reply)
+
+#The schema keeps lost before score, so the model lists what was lost before it scores
+def test_verdict_format_order():
+    schema = validator.VERDICT_FORMAT["schema"]
+    assert validator.VERDICT_FORMAT["type"] == "json_schema"
+    assert list(schema["properties"]) == ["lost", "score", "reason"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"lost", "score", "reason"}
+
+#The system prompt says politeness and filler are never requirements, so cutting them isn't a loss
+def test_system_prompt_politeness_is_not_a_requirement():
+    assert "Never requirements" in validator.VALIDATOR_SYSTEM_PROMPT
+    assert "politeness" in validator.VALIDATOR_SYSTEM_PROMPT
+
+#LLM call sends the system prompt, both prompts, the verdict schema and low effort
+def test_callValidatorLLM_sends_request(fakeClient):
+    messages = fakeClient(verdict(7))
     result = validator.callValidatorLLM("Please write a poem.", "Write a poem.")
 
-    assert result == (7.0, True, "Fine.", "")
-    assert messages.lastRequest["system"] == validator.VALIDATOR_SYSTEM_PROMPT
-    userContent = messages.lastRequest["messages"][0]["content"]
-    assert "Please write a poem." in userContent
-    assert "Write a poem." in userContent
+    assert result == (7, True, "Fine.", "Nothing lost.")
+    request = messages.lastRequest
+    assert request["system"] == validator.VALIDATOR_SYSTEM_PROMPT
+    assert request["model"] == validator.VALIDATOR_MODEL
+    assert request["output_config"] == {"effort": validator.VALIDATOR_EFFORT, "format": validator.VERDICT_FORMAT}
+    assert "Please write a poem." in request["messages"][0]["content"]
+    assert "Write a poem." in request["messages"][0]["content"]
 
-#The verdict is read from the text block, after any thinking block, at low effort
-def test_callValidatorLLM_skips_thinking_block(fakeClient):
-    messages = fakeClient("SCORE: 8\nPASSED: Yes\nREASON: Only filler was removed.")
-    result = validator.callValidatorLLM("Please write a poem.", "Write a poem.")
+#The verdict is read from the text block after any thinking block, and without one too
+@pytest.mark.parametrize("thinking", [True, False])
+def test_callValidatorLLM_reads_text_block(fakeClient, thinking):
+    fakeClient(verdict(8, "Only filler was removed."), thinking=thinking)
+    assert validator.callValidatorLLM("Please write a poem.", "Write a poem.") == (
+        8, True, "Only filler was removed.", "Nothing lost.")
 
-    assert result == (8.0, True, "Only filler was removed.", "")
-    assert messages.lastRequest["output_config"] == {"effort": validator.VALIDATOR_EFFORT}
-    assert messages.lastRequest["model"] == validator.VALIDATOR_MODEL
-
-#A reply without thinking is read the same way
-def test_callValidatorLLM_without_thinking(fakeClient):
-    fakeClient("SCORE: 7\nPASSED: Yes\nREASON: Fine.", thinking=False)
-    assert validator.callValidatorLLM("Please write a poem.", "Write a poem.") == (7.0, True, "Fine.", "")
-
-#A reply cut off by max_tokens, refused, or with no text raises instead of scoring the rewrite 1
+#A reply cut off by max_tokens, refused, or with no text raises instead of failing the rewrite
 @pytest.mark.parametrize("reply, stopReason", [
-    ("READ: - a poem\nANSWER: yes\nTHI", "max_tokens"),
+    ('{"lost": [], "sco', "max_tokens"),
     (None, "max_tokens"),
     (None, "refusal"),
     (None, "end_turn"),
@@ -131,7 +144,7 @@ def test_callValidatorLLM_unusable_reply_raises(fakeClient, reply, stopReason):
 
 #Identical prompts pass automatically without calling the LLM
 def test_validatePrompt_identical_skips_llm(fakeClient):
-    messages = fakeClient("SCORE: 0\nPASSED: No\nREASON: should not be used")
+    messages = fakeClient(verdict(1, "should not be used", ["everything"]))
     result = validator.validatePrompt("Write a poem.", "  Write a poem.\n")
 
     assert messages.calls == 0
@@ -142,7 +155,7 @@ def test_validatePrompt_identical_skips_llm(fakeClient):
 def test_validatePrompt_uses_llm_verdict(fakeClient):
     original = "Write a 100-word story about a dragon."
     optimized = "Write a story about a dragon."
-    messages = fakeClient("THINK: word limit dropped.\nSCORE: 4\nPASSED: No\nREASON: Lost the 100-word limit.")
+    messages = fakeClient(verdict(4, "Dropped the word limit.", ["100-word limit"]))
 
     result = validator.validatePrompt(original, optimized)
 
@@ -150,23 +163,23 @@ def test_validatePrompt_uses_llm_verdict(fakeClient):
     assert isinstance(result, ValidationResult)
     assert result.originalPrompt == original
     assert result.optimizedPrompt == optimized
-    assert result.qualityScore == 4.0
+    assert result.qualityScore == 4
     assert result.passed is False
-    assert result.reasoning == "Lost the 100-word limit."
-    assert result.reactTrace == "THINK: word limit dropped."
+    assert result.reasoning == "Dropped the word limit. Lost: 100-word limit."
+    assert result.reactTrace == "Lost: 100-word limit"
 
 #A prompt type can ask for a higher score than the LLM's own pass mark of 6
 def test_validatePrompt_applies_pass_score(fakeClient):
-    fakeClient("THINK: minor loss.\nSCORE: 7\nPASSED: Yes\nREASON: Mostly preserved.")
+    fakeClient(verdict(7, "Mostly preserved."))
     assert validator.validatePrompt("Please fix this code.", "Fix code.").passed is True
 
     strict = validator.validatePrompt("Please fix this code.", "Fix code.", passScore=8) #above any type's bar today, still applied
     assert strict.passed is False
-    assert strict.qualityScore == 7.0
+    assert strict.qualityScore == 7
     assert strict.reasoning.startswith("Mostly preserved.")
     assert "below the 8" in strict.reasoning
 
-#The pass score never turns the LLM's "no" into a pass
+#The pass score never turns a listed loss into a pass
 def test_validatePrompt_pass_score_never_overrides_fail(fakeClient):
-    fakeClient("SCORE: 9\nPASSED: No\nREASON: Dropped the code block.")
+    fakeClient(verdict(9, "Dropped the code block.", ["the code block"]))
     assert validator.validatePrompt("Fix this.", "Fix.", passScore=6).passed is False
