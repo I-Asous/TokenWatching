@@ -33,3 +33,5 @@ class OrchestrationRequest(BaseModel):
     prompt: str = Field(min_length=1)
     target: str
     context: list[ContextCreate] = []
+    validator_pass_score: int | None = Field(default=None, ge=1, le=10)
+    max_optimization_attempts: int = Field(default=2, ge=1, le=5)

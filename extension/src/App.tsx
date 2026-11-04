@@ -3,6 +3,7 @@ import { Show, SignIn, SignUp, UserButton } from '@clerk/chrome-extension';
 import Chatbox from './pages/Chatbox';
 import History from './pages/History';
 import Stats from './pages/Stats';
+import Settings from './pages/Settings';
 import Navbar, { type Tab } from './components/Navbar';
 import extensionLogo from '../../Logo.png';
 
@@ -38,6 +39,7 @@ function App() {
       {tab === 'stats' && <Stats />}
       {tab === 'prompt' && <Chatbox />}
       {tab === 'history' && <History />}
+      {tab === 'settings' && <Settings />}
     </>
   );
 

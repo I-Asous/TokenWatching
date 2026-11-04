@@ -33,6 +33,9 @@ class OrchestrationResult:
     wasOptimized: bool
     auditResult: AuditResult
     attempts: list[ValidationResult] = field(default_factory=list)
+    # Keep every candidate so the extension can explain what the Optimizer tried,
+    # including candidates rejected by validation or that saved no tokens.
+    optimizerAttempts: list[OptimizationResult] = field(default_factory=list)
     tokensSaved: int = 0
     percentSaved: float = 0.0
     changes: list[str] = field(default_factory=list)
@@ -109,13 +112,21 @@ def buildMustPreserve(prompt: str) -> list[str]:
 *    the final token/cost savings (if any), and the Optimizer's list of
 *    changes for the accepted rewrite is returned.
 """
-def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHooks | None = None) -> OrchestrationResult:
+def runPipeline(
+    prompt: str,
+    target: str = DEFAULT_TARGET,
+    hook: OrchestrationHooks | None = None,
+    passScore: int | None = None,
+    maxAttempts: int | None = None,
+) -> OrchestrationResult:
 
     # we do this so if we want to run it without hooks, we can!
     hook = hook or OrchestrationHooks()
 
     promptTypes = detectPromptTypes(prompt)
     profile = combineProfiles(promptTypes)
+    validatorPassScore = passScore if passScore is not None else profile.passScore
+    optimizationAttemptLimit = maxAttempts if maxAttempts is not None else MAX_OPTIMIZATION_ATTEMPTS
 
     hook.updateStage("auditing")
     auditResult = auditPrompt(prompt, target, skipChecks=profile.skipChecks)
@@ -136,11 +147,12 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         return orchestrationResult
  
     attempts: list[ValidationResult] = []
+    optimizerAttempts: list[OptimizationResult] = []
     rejectedAttempts: list[RejectedAttempt] = []
     mustPreserve = buildMustPreserve(prompt)
     error = None
  
-    for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
+    for _ in range(optimizationAttemptLimit):
         hook.updateStage("optimizing")
         try:
             optimizationResult = optimizePrompt(prompt, auditResult.issues, target,
@@ -152,6 +164,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
             logger.warning("%s, returning the original prompt", error)
             break
         hook.saveOptimization(optimizationResult)
+        optimizerAttempts.append(optimizationResult)
 
         #A rewrite that saves nothing (unchanged or longer) isn't worth a Validator call or a retry
         if optimizationResult.tokensSaved == 0:
@@ -182,7 +195,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         #An unvalidated rewrite is never sent, so a failed Validator call falls back to the original
         try:
             validationResult = validatePrompt(prompt, optimizationResult.optimizedPrompt,
-                                              passScore=profile.passScore,
+                                              passScore=validatorPassScore,
                                               typeRules=profile.optimizerRules)
         except APIError as apiError:
             error = f"Validator call failed: {apiError}"
@@ -199,6 +212,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
                 wasOptimized=True,
                 auditResult=auditResult,
                 attempts=attempts,
+                optimizerAttempts=optimizerAttempts,
                 tokensSaved=optimizationResult.tokensSaved,
                 percentSaved=optimizationResult.percentSaved,
                 changes=optimizationResult.changes,
@@ -221,6 +235,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         wasOptimized=False,
         auditResult=auditResult,
         attempts=attempts,
+        optimizerAttempts=optimizerAttempts,
         vagueness=vagueness,
         promptTypes=promptTypes,
         error=error,

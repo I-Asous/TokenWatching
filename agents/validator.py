@@ -2,8 +2,8 @@ import os
 from dataclasses import dataclass
 from anthropic import Anthropic
  
-#A hung call raises APITimeoutError, which the orchestrator catches
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=10.0)
+#The detailed comparison can take longer than the other agent calls; the orchestrator catches timeouts
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=30.0)
 
 #Lowest score that passes when no prompt type asks for more (same as the system prompt says)
 DEFAULT_PASS_SCORE = 6
