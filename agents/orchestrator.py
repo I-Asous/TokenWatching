@@ -30,6 +30,15 @@ MAX_OPTIMIZATION_ATTEMPTS = 2
 PRESERVE_LOCK_KINDS = ("constraint", "number")
 #A prompt shorter than this rarely has MIN_TOKENS_SAVED to cut, so it isn't worth an Optimizer call. Tune on real runs
 MIN_TOKENS_FOR_OPTIMIZER = 15
+#A clean-looking prompt at or above this many tokens still gets the Optimizer's own judgment (it reads the
+#whole prompt to rewrite it anyway, so this costs nothing extra over the free rule checks), since the rule
+#checks can miss subtle waste a long prompt has room for (merged duplicate instructions, padded framing)
+#that short prompts don't. Below it, a prompt the rule checks pass is trusted as clean. Replaces the
+#Auditor's own LLM-review call (removed 11/4/2026, see auditor.py), which answered the same question with
+#a second model call before the Optimizer ever saw the prompt. Lower than that call's old 150-token gate:
+#evals/prompts.jsonl's "long-system" case (102 tokens, several differently-worded "always be polite"
+#sentences) has nothing a rule check catches but is long enough to be worth the Optimizer's own look. Tune on real runs
+MIN_TOKENS_TO_LET_OPTIMIZER_LOOK = 100
 #A rewrite must save at least this many tokens and this share of the prompt to be worth a Validator call or a retry.
 #The share stays low because a long code block with a polite wrapper can save many tokens but few percent. Tune on real runs
 MIN_TOKENS_SAVED = 5
@@ -62,6 +71,22 @@ class OrchestrationResult:
     #Their answers come back in the next runPipeline call, with the same prompt
     needsClarification: bool = False
     questions: list[str] = field(default_factory=list)
+    #Set on a run made without the LLM (runPipeline's llm=False) when the full pipeline would call the Optimizer
+    #for this prompt, so the extension can offer "Optimize further". False whenever there's nothing more to do
+    canOptimizeFurther: bool = False
+
+#What one Optimizer attempt, inside runPipeline's retry loop, decided to do next. Internal to runPipeline;
+#not part of the pipeline's public result
+@dataclass
+class AttemptOutcome:
+    #Set to return this result at once: the Optimizer's own submit_rewrite loop already validated the
+    #rewrite (true for every real run, since it always validates what it submits before returning), or it
+    #chose ask_user or use_local_rewrite. None means the attempt settled nothing on its own
+    result: OrchestrationResult | None = None
+    #True to let the loop call the Optimizer again (a rewrite the safety-net checks below rejected).
+    #False stops the loop: no savings, or an API failure (recorded on runPipeline's own error variable,
+    #not here, since every caller of tryOptimizationAttempt already has that variable in scope)
+    retry: bool = False
 
 """
 * @brief Lists what a rewrite of this prompt must keep, for the Optimizer's message.
@@ -263,11 +288,19 @@ def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, au
 *    wordy phrases) leave nothing for the rule checks to flag and save at least MIN_TOKENS_SAVED and
 *    MIN_PERCENT_SAVED, that rewrite is returned with no Optimizer or Validator call (not with answers,
 *    which need the Optimizer). This is tried even when the Auditor found no issues.
-* 1c. Otherwise, if the Auditor found no issues, the original prompt is returned unchanged with no LLM
-*    call. With answers, the Optimizer always runs, since working them into the prompt is what the person asked for.
+* 1c. Otherwise, if the Auditor found no issues and the prompt is under MIN_TOKENS_TO_LET_OPTIMIZER_LOOK
+*    tokens, the original prompt is returned unchanged with no LLM call: a clean, short prompt is trusted
+*    as clean. At or above that length, the Optimizer gets a look anyway even with no issues, since the
+*    rule checks can miss subtle waste a long prompt has room for (merged duplicate instructions, padded
+*    framing) -- it already has to read the whole prompt to rewrite it, so this costs nothing beyond a
+*    normal Optimizer call, and it can mark the prompt unchanged itself if there's truly nothing to cut.
+*    With answers, the Optimizer always runs regardless of length, since working them in is what was asked for.
 * 1d. A prompt under MIN_TOKENS_FOR_OPTIMIZER tokens is returned unchanged with no Optimizer call
 *    (unless it has answers). So is a prompt that isn't English, answers or not (isEnglish): the local
 *    checks can't read it, so nothing would catch a rewrite that dropped a task or an option.
+* 1e. With llm=False, the run stops where the Optimizer would be called: the local rewrite from 1b is
+*    returned if there is one, otherwise the prompt unchanged, with canOptimizeFurther set. No API call is
+*    made at all, so the person gets an answer at once and can ask for the full pass, which runs again with llm=True.
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues, the type's rules and the list of what this prompt must keep (buildMustPreserve),
 *    plus, on retries, every earlier rewrite the Validator rejected along with its reason.
@@ -279,12 +312,15 @@ def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, au
 *    - ask_user, offered when the vagueness report has questions and fewer than MAX_ANSWERED_QUESTIONS
 *      have been answered. No rewrite is made: the result has needsClarification set and the
 *      Optimizer's questions, for the extension to ask.
-* 3. The rewrite is checked locally again with findRewriteProblems (locks, tasks and
-*    options), as a safety net. If anything is broken,
-*    the attempt fails without a Validator call and those reasons are
-*    passed back to the Optimizer. Otherwise the Validator checks the rewrite
-*    against the original prompt, with the type's rules and pass score, unless the rewrite
-*    only deleted politeness and filler (isFillerOnlyEdit), which passes without a Validator call.
+* 3. In the one real call site (service/orchestrator.py), the Optimizer always validates what it submits
+*    itself (submit_rewrite runs findRewriteProblems and, unless the edit is filler-only, the Validator,
+*    before ever returning -- see optimizer.py's findSubmissionProblems), so a returned "rewrite" action
+*    is always already in submissionValidator.accepted and the loop below returns it at once. The
+*    findRewriteProblems / Validator check still run again here as a safety net for a caller that
+*    validates submissions some other way: if anything is broken, the attempt fails without a Validator
+*    call and those reasons are passed back to the Optimizer; otherwise the Validator checks the rewrite
+*    against the original prompt, with the type's rules and pass score, unless the rewrite only deleted
+*    politeness and filler (isFillerOnlyEdit), which passes without a Validator call.
 * 4. If it passes, that rewrite becomes the final prompt and the loop
 *    stops immediately NO wasted extra calls.
 * 5. If it fails, the Optimizer is retried (up to
@@ -307,7 +343,7 @@ def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, au
 *    changes for the accepted rewrite is returned.
 """
 def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHooks | None = None,
-                answers: list[Answer] | None = None) -> OrchestrationResult:
+                answers: list[Answer] | None = None, llm: bool = True) -> OrchestrationResult:
 
     # we do this so if we want to run it without hooks, we can!
     hook = hook or OrchestrationHooks()
@@ -350,9 +386,24 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         hook.finishJob(orchestrationResult)
         return orchestrationResult
 
-    if ((not auditResult.issues or auditResult.token_count < MIN_TOKENS_FOR_OPTIMIZER) and not answers
+    #A long prompt gets the Optimizer's own look even with no rule-flagged issues (see MIN_TOKENS_TO_LET_OPTIMIZER_LOOK)
+    givesOptimizerAChance = auditResult.issues or auditResult.token_count >= MIN_TOKENS_TO_LET_OPTIMIZER_LOOK
+    if ((not givesOptimizerAChance or auditResult.token_count < MIN_TOKENS_FOR_OPTIMIZER) and not answers
             or not isEnglish(prompt)):
         orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes)
+        hook.finishJob(orchestrationResult)
+        return orchestrationResult
+
+    #Without the LLM - free result is the answer and the Optimizer pass is offered instead of run
+    if not llm:
+        if localResult:
+            hook.updateStage("optimizing")
+            hook.saveOptimization(localResult)
+            orchestrationResult = acceptLocal(prompt, clarified, localResult, auditResult, [], vagueness,
+                                              promptTypes, hook)
+        else:
+            orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes)
+        orchestrationResult.canOptimizeFurther = True
         hook.finishJob(orchestrationResult)
         return orchestrationResult
 
@@ -364,8 +415,23 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
     submissionValidator = SubmissionValidator(clarified, target, profile.passScore, profile.optimizerRules, hook,
                                               attempts, rejectedAttempts)
 
-    for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
-        hook.updateStage("optimizing")
+    """
+    * @brief Runs one Optimizer call and judges what it returned. Closes over runPipeline's locals (and
+    * mutates its error, attempts and rejectedAttempts) instead of taking them as parameters, since it has
+    * no purpose outside the loop below.
+    * @post
+    * 1. outcome.result is set, and the loop below returns it at once, when the Optimizer's own
+    *    submit_rewrite already validated this rewrite (submissionValidator.accepted -- true for every
+    *    real run, since the orchestrator always passes a validate that runs before submit_rewrite can
+    *    return), or it chose ask_user or use_local_rewrite.
+    * 2. outcome.retry is True only to call the Optimizer again: a rewrite the safety-net checks below
+    *    reject (see runPipeline's docstring, point 3, for why a real run doesn't reach them), or one the
+    *    Validator rejected outside the Optimizer's own loop.
+    * 3. Otherwise outcome is empty, meaning stop: no savings (or, with answers, nothing worked in), or an
+    *    API failure, recorded on the enclosing error variable since AttemptOutcome has nowhere to put it.
+    """
+    def tryOptimizationAttempt() -> AttemptOutcome:
+        nonlocal error
         try:
             optimizationResult = optimizePrompt(clarified, auditResult.issues, target,
                                                 rejectedAttempts=list(rejectedAttempts),
@@ -384,45 +450,42 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
             agent = "Validator" if submissionValidator.apiFailed else "Optimizer"
             error = f"{agent} call failed: {apiError}"
             logger.warning("%s, returning the original prompt", error)
-            break
+            return AttemptOutcome()
 
         #Validated during the Optimizer's loop: the draft and its verdict are already saved and in attempts
         if (optimizationResult.action == "rewrite"
                 and optimizationResult.optimizedPrompt in submissionValidator.accepted):
-            orchestrationResult = acceptedResult(prompt, optimizationResult, auditResult, attempts, vagueness,
-                                                 promptTypes)
-            hook.finishJob(orchestrationResult)
-            return orchestrationResult
+            return AttemptOutcome(acceptedResult(prompt, optimizationResult, auditResult, attempts, vagueness,
+                                                 promptTypes))
         hook.saveOptimization(optimizationResult)
 
         #The Optimizer chose to ask: nothing is rewritten until the person answers
         if optimizationResult.action == "ask_user":
-            orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes, attempts)
-            orchestrationResult.needsClarification = True
-            orchestrationResult.questions = optimizationResult.questions
-            hook.finishJob(orchestrationResult)
-            return orchestrationResult
+            result = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes, attempts)
+            result.needsClarification = True
+            result.questions = optimizationResult.questions
+            return AttemptOutcome(result)
 
         #The Optimizer chose the local rewrite, which only deleted politeness and filler: no Validator call
         if optimizationResult.action == "local":
-            orchestrationResult = acceptLocal(prompt, clarified, optimizationResult, auditResult, attempts,
-                                              vagueness, promptTypes, hook)
-            hook.finishJob(orchestrationResult)
-            return orchestrationResult
+            return AttemptOutcome(acceptLocal(prompt, clarified, optimizationResult, auditResult, attempts,
+                                              vagueness, promptTypes, hook))
 
         #A rewrite that saves little or nothing (unchanged or longer) isn't worth a Validator call or a retry.
         #With answers, saving isn't the point: any rewrite that works them in without growing goes on
         if answers:
             if (optimizationResult.optimizedPrompt == clarified
                     or optimizationResult.optimizedTokens > optimizationResult.originalTokens):
-                break
+                return AttemptOutcome()
         elif not savesEnough(optimizationResult):
-            break
+            return AttemptOutcome()
 
         hook.updateStage("validating")
         #Free local check first: a rewrite that drops a code block, URL, rule, step, number, task or option
         #is REJECTED without paying for a Validator call then exact reasons go back to the Optimizer.
-        #The Optimizer already runs this check before it submits, so this is a safety net
+        #The Optimizer already runs this exact check, against this same reference text, before it submits
+        #(optimizer.py's findSubmissionProblems), so this never finds anything for a real run; it's a
+        #safety net for a caller that validates submissions some other way
         brokenLocks = findRewriteProblems(reference, optimizationResult.optimizedPrompt)
         if brokenLocks:
             reason = "Dropped or changed required parts: " + "; ".join(brokenLocks)
@@ -439,7 +502,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
             rejectedAttempts.append(RejectedAttempt(optimizationResult.optimizedPrompt, reason))
 
             hook.saveValidation(brokenLockValidation)
-            continue
+            return AttemptOutcome(retry=True)
 
         #A rewrite that only deleted politeness and filler can't have changed the request, so it skips the
         #Validator. Anything else is validated: an unvalidated rewrite is never sent, so a failed call falls back
@@ -453,22 +516,30 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
             except (APIError, ValidatorReplyError) as apiError:
                 error = f"Validator call failed: {apiError}"
                 logger.warning("%s, returning the original prompt", error)
-                break
+                return AttemptOutcome()
         hook.saveValidation(validationResult)
 
         attempts.append(validationResult)
 
         if validationResult.passed:
-            orchestrationResult = acceptedResult(prompt, optimizationResult, auditResult, attempts, vagueness, promptTypes)
-            hook.finishJob(orchestrationResult)
-
-            return orchestrationResult
+            return AttemptOutcome(acceptedResult(prompt, optimizationResult, auditResult, attempts, vagueness,
+                                                 promptTypes))
 
         #Feed the rejected rewrite and the Validator's reasoning back in so the next
         #attempt sees what it wrote and what that broke, instead of failing the same way again
         rejectedAttempts.append(
             RejectedAttempt(optimizationResult.optimizedPrompt, validationResult.reasoning)
         )
+        return AttemptOutcome(retry=True)
+
+    for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
+        hook.updateStage("optimizing")
+        outcome = tryOptimizationAttempt()
+        if outcome.result is not None:
+            hook.finishJob(outcome.result)
+            return outcome.result
+        if not outcome.retry:
+            break
     #No LLM rewrite passed within the retry amount (or an API call failed) SO fail gets closed:
     #the local rewrite still saves tokens without changing the request, otherwise the prompt goes back as is
     if localResult:

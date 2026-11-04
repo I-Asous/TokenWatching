@@ -71,10 +71,12 @@ def test_parseVerdict_lists_losses():
     assert reason == "Dropped the word limit. Lost: 100-word limit."
     assert trace == "Lost: 100-word limit"
 
-#A listed loss fails the rewrite even when the score is 6 or more
-def test_parseVerdict_loss_fails_any_score():
-    _, passed, _, _ = validator.parseVerdict(verdict(7, "Mostly kept.", ["the knee injury"]))
-    assert passed is False
+#The score decides: a minor loss the model still scores 6+ passes, and the loss stays in the reason and trace
+def test_parseVerdict_score_decides():
+    _, passed, reason, trace = validator.parseVerdict(verdict(7, "Mostly kept.", ["'kind of'"]))
+    assert passed is True
+    assert reason == "Mostly kept. Lost: 'kind of'."
+    assert trace == "Lost: 'kind of'"
 
 #Blank loss entries don't count as losses
 def test_parseVerdict_ignores_blank_losses():
@@ -179,7 +181,11 @@ def test_validatePrompt_applies_pass_score(fakeClient):
     assert strict.reasoning.startswith("Mostly preserved.")
     assert "below the 8" in strict.reasoning
 
-#The pass score never turns a listed loss into a pass
+#The pass score never turns a low score into a pass
 def test_validatePrompt_pass_score_never_overrides_fail(fakeClient):
-    fakeClient(verdict(9, "Dropped the code block.", ["the code block"]))
-    assert validator.validatePrompt("Fix this.", "Fix.", passScore=6).passed is False
+    fakeClient(verdict(4, "Dropped the code block.", ["the code block"]))
+    assert validator.validatePrompt("Fix this.", "Fix.", passScore=1).passed is False
+
+#The system prompt keeps cuts that are never requirements out of lost
+def test_system_prompt_lost_lists_only_requirements():
+    assert "never a cut from the first list" in validator.VALIDATOR_SYSTEM_PROMPT

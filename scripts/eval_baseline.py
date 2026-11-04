@@ -35,7 +35,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "backend"))
 load_dotenv(REPO / ".env")
 
-from agents import auditor, optimizer, tokens, validator  # noqa: E402
+from agents import optimizer, tokens, validator  # noqa: E402
 from agents.hooks.orchestrator import OrchestrationHooks  # noqa: E402
 from agents.optimizer import findRewriteProblems  # noqa: E402
 from agents.orchestrator import fillerOnlyValidation, runPipeline  # noqa: E402
@@ -46,8 +46,10 @@ RESULTS_DIR = REPO / "evals" / "results"
 PRICES_FILE = REPO / "config" / "prices.yaml"
 #The usage fields an API call is billed for, as the recorder stores them
 USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-#The modules whose Anthropic client makes the pipeline's LLM calls, by the agent name they're recorded under
-LLM_AGENTS = {"auditor": auditor, "optimizer": optimizer, "validator": validator}
+#The modules whose Anthropic client makes the pipeline's LLM calls, by the agent name they're recorded under.
+#The Auditor no longer makes its own LLM call (11/4/2026: folded into the Optimizer's own first look, see
+#orchestrator.MIN_TOKENS_TO_LET_OPTIMIZER_LOOK), so it's no longer one of these
+LLM_AGENTS = {"optimizer": optimizer, "validator": validator}
 OUTCOMES = ("optimized", "fillerOnly", "unchanged", "ask", "error", "crash")
 #What each "expect" in the eval set accepts as a match
 EXPECTED_OUTCOMES = {
@@ -178,7 +180,6 @@ def expectMet(expect: str | None, outcome: str, result) -> bool | None:
 *    LLM calls per agent and API tokens per model, and latency.
 """
 def runCase(case: dict, target: str, recorder: CallRecorder, repeat: int = 0) -> dict:
-    auditor.cachedReview.cache_clear()
     tokens.countTokens.cache_clear()
     tokens.estimateTokens.cache_clear()
     recorder.calls = []
@@ -218,6 +219,8 @@ def runCase(case: dict, target: str, recorder: CallRecorder, repeat: int = 0) ->
     record["rewriteProblems"] = findRewriteProblems(case["prompt"], finalPrompt) if result.wasOptimized else []
     record["attemptScores"] = [attempt.qualityScore for attempt in result.attempts]
     record["attemptPassed"] = [attempt.passed for attempt in result.attempts]
+    #Why each attempt passed or failed, so a rejection can be read without the database
+    record["attemptReasons"] = [attempt.reasoning for attempt in result.attempts]
     return record
 
 

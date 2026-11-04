@@ -39,4 +39,7 @@ class OrchestrationRequest(BaseModel):
     target: str
     # send the same prompt again with every answer so far to have them worked into the rewrite
     answers: list[ClarifyingAnswer] = Field(default_factory=list, max_length=10)
+    # false (default): only the free local cleanup runs and the answer comes back at once, with canOptimizeFurther
+    # set when the LLM pass could do more. true: the full pass (Optimizer + Validator), e.g. from "Optimize further"
+    optimizeFurther: bool = False
     context: list[ContextCreate] = []

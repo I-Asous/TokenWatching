@@ -48,7 +48,7 @@ VALIDATOR_SYSTEM_PROMPT = """You check whether a shortened prompt still asks for
 Never requirements, so cutting them is never a loss: greetings, thanks, politeness, hedging, apologies, filler, repeated instructions, and backstory that doesn't change the answer.
 Requirements: the task, subject, audience, format, length, tone of the requested output, constraints and negations, numbers, examples, code, URLs, quoted text, options ("maybe add tests" must stay optional), the prompt's language, and context that changes the answer.
 
-In lost, list each requirement the rewrite dropped, weakened or changed, and anything it added. Leave it empty if there's none.
+In lost, list each requirement the rewrite dropped, weakened or changed, and anything it added. Only list requirements: never a cut from the first list, and never a difference in wording. Leave it empty if there's none.
 Score 1-10:
 - 9-10: the same request.
 - 6-8: the same request, phrased differently.
@@ -85,8 +85,9 @@ def buildUserMessage(originalPrompt: str, optimizedPrompt: str, typeRules: str =
 * @brief Turns the validator LLM's JSON reply into its parts.
 * @post
 * 1. The reply is validated against the Verdict schema; one that doesn't match raises ValidatorReplyError.
-* 2. passed is True only if the score is at least DEFAULT_PASS_SCORE and nothing was listed as lost, so a
-*    reply that lists a loss but scores it 6+ still fails.
+* 2. passed is True if the score is at least DEFAULT_PASS_SCORE. The scoring guide already puts a lost
+*    requirement at 3-5, so the score is the verdict; lost explains it. (Failing any listed loss rejected
+*    rewrites the model scored 7-9 in the phase2 eval, which cost a retry each.)
 * 3. What was lost is added to the reason, since the reason is what a retry of the Optimizer is told to fix,
 *    and the trace lists it too (or says nothing was), so the stored validation shows why it passed or failed.
 * 4. A tuple of (score, passed, reason, reactTrace) is returned.
@@ -97,7 +98,7 @@ def parseVerdict(reply: str) -> tuple[int, bool, str, str]:
     except ValidationError as error:
         raise ValidatorReplyError(f"Validator reply isn't a valid verdict: {error}") from error
     lost = [item.strip() for item in verdict.lost if item.strip()]
-    passed = verdict.score >= DEFAULT_PASS_SCORE and not lost
+    passed = verdict.score >= DEFAULT_PASS_SCORE
     reason = verdict.reason.strip()
     if lost:
         reason = f"{reason} Lost: {'; '.join(lost)}."
