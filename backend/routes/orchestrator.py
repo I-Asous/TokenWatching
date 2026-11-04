@@ -19,6 +19,7 @@ def orchestrator(body: OrchestrationRequest, user_id: Annotated[str, Depends(cur
             user_id=user_id,
             prompt=body.prompt,
             target=body.target,
+            answers=body.answers,
             context=body.context,
             db=db,
             validator_pass_score=body.validator_pass_score,

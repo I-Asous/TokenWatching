@@ -29,9 +29,16 @@ class OrchestrationUpdate(BaseModel):
 class OrchestrationInsert(OrchestrationCreate):
     user_id: str
 
+# an answer to a clarifying question (from result.questions or result.vagueness.questions)
+class ClarifyingAnswer(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    answer: str = Field(max_length=2000)
+
 class OrchestrationRequest(BaseModel):
     prompt: str = Field(min_length=1)
     target: str
+    # send the same prompt again with every answer so far to have them worked into the rewrite
+    answers: list[ClarifyingAnswer] = Field(default_factory=list, max_length=10)
     context: list[ContextCreate] = []
     validator_pass_score: int | None = Field(default=None, ge=1, le=10)
     max_optimization_attempts: int = Field(default=2, ge=1, le=5)

@@ -22,6 +22,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+#agents/hooks imports schema from the backend, same as tests/conftest.py
+sys.path.insert(0, str(REPO / "backend"))
 
 from agents.orchestrator import runPipeline  # noqa: E402
 from agents.tokens import DEFAULT_TARGET, TARGETS  # noqa: E402

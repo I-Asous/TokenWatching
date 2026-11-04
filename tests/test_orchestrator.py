@@ -11,9 +11,11 @@ except ImportError:
 from anthropic import APIConnectionError
 from agents import orchestrator
 from agents.auditor import AuditResult
-from agents.optimizer import OptimizationResult, RejectedAttempt
+from agents.optimizer import OptimizationResult, RejectedAttempt, Answer
 from agents.validator import ValidationResult
 from agents.prompt_types import PROFILES
+#The real local rewrite and filler check, for the tests that turn them back on
+from agents.local_rewrite import localRewrite as realLocalRewrite, isFillerOnlyEdit as realIsFillerOnlyEdit
 
 PROMPT = "Please, could you kindly write a short story about a dragon? Thank you so much!"
 REWRITE = "Write a short story about a dragon."
@@ -34,19 +36,28 @@ class FakeAgents:
         self.typeRules = []
         self.passScores = []
         self.validatorRules = []
+        self.prompts = []
+        self.offers = []
 
     def auditPrompt(self, prompt, target, skipChecks=frozenset()):
         self.targets.append(target)
         self.skipChecks.append(skipChecks)
         return AuditResult(token_count=20, estimatedCost=0.0, issues=self.issues, severity="Medium")
 
-    def optimizePrompt(self, prompt, issues, target, rejectedAttempts=None, mustPreserve=None, typeRules=""):
+    #offers: what the run offered beyond a rewrite (localResult, questions, maxQuestions, answers, checkAgainst).
+    #A scripted reply is (rewrite, tokensSaved), or an OptimizationResult returned as is (the local rewrite or ask_user)
+    def optimizePrompt(self, prompt, issues, target, rejectedAttempts=None, mustPreserve=None, typeRules="", **offers):
         self.targets.append(target)
         self.typeRules.append(typeRules)
         self.preserveCalls.append(list(mustPreserve or []))
-        rewrite, tokensSaved = self.rewrites[len(self.optimizerCalls)]
+        self.prompts.append(prompt)
+        self.offers.append(offers)
+        reply = self.rewrites[len(self.optimizerCalls)]
         self.optimizerCalls.append(list(issues))
         self.rejectedCalls.append(list(rejectedAttempts or []))
+        if isinstance(reply, OptimizationResult):
+            return reply
+        rewrite, tokensSaved = reply
         return OptimizationResult(
             originalPrompt=prompt,
             optimizedPrompt=rewrite,
@@ -78,6 +89,10 @@ def fakeAgents(monkeypatch):
         monkeypatch.setattr(orchestrator, "auditPrompt", fake.auditPrompt)
         monkeypatch.setattr(orchestrator, "optimizePrompt", fake.optimizePrompt)
         monkeypatch.setattr(orchestrator, "validatePrompt", fake.validatePrompt)
+        #The local fast path and the Validator skip are off here, so these tests cover the LLM path.
+        #They have their own tests below
+        monkeypatch.setattr(orchestrator, "localRewrite", lambda *args, **kwargs: None)
+        monkeypatch.setattr(orchestrator, "isFillerOnlyEdit", lambda original, rewrite: False)
         return fake
     return install
 
@@ -197,7 +212,7 @@ def test_runPipeline_validator_api_error_returns_original(fakeAgents, monkeypatc
 #A failed Optimizer call returns the original prompt, records the error and doesn't call the Validator
 def test_runPipeline_optimizer_api_error_returns_original(fakeAgents, monkeypatch):
     fake = fakeAgents(issues=["filler"])
-    def fail(prompt, issues, target, rejectedAttempts=None, mustPreserve=None, typeRules=""):
+    def fail(prompt, issues, target, rejectedAttempts=None, mustPreserve=None, typeRules="", **offers):
         raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
     monkeypatch.setattr(orchestrator, "optimizePrompt", fail)
     result = orchestrator.runPipeline(PROMPT)
@@ -344,7 +359,57 @@ def test_runPipeline_no_savings_returns_original(fakeAgents, rewrite):
     assert result.wasOptimized is False
     assert result.attempts == []
 
-CHAT_PROMPT = "Hey, could you please suggest some fun weekend plans for me? Thanks so much!"
+#A rewrite under either minimum saving is not validated, retried or returned, and one at both minimums is validated
+@pytest.mark.parametrize("tokensSaved,percentSaved,validated", [(4, 50.0, False), (40, 1.9, False), (5, 2.0, True)])
+def test_runPipeline_minimum_saving(fakeAgents, monkeypatch, tokensSaved, percentSaved, validated):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, tokensSaved)], verdicts=[(True, "Fine.")])
+    realOptimize = fake.optimizePrompt
+    monkeypatch.setattr(orchestrator, "optimizePrompt",
+                        lambda *args, **kwargs: replace(realOptimize(*args, **kwargs), percentSaved=percentSaved))
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert len(fake.optimizerCalls) == 1
+    assert fake.validatorCalls == ([REWRITE] if validated else [])
+    assert result.wasOptimized is validated
+    assert result.finalPrompt == (REWRITE if validated else PROMPT)
+
+#A prompt too short to save much skips the Optimizer, but keeps its audit and vagueness report
+def test_runPipeline_short_prompt_skips_optimizer(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["High token to word ratio"])
+    monkeypatch.setattr(fake, "auditPrompt", lambda prompt, target, skipChecks=frozenset(): AuditResult(
+        token_count=orchestrator.MIN_TOKENS_FOR_OPTIMIZER - 1, estimatedCost=0.0, issues=fake.issues, severity="Medium"))
+    monkeypatch.setattr(orchestrator, "auditPrompt", fake.auditPrompt)
+    result = orchestrator.runPipeline("Make it better.")
+
+    assert fake.optimizerCalls == []
+    assert result.finalPrompt == "Make it better."
+    assert result.wasOptimized is False
+    assert result.auditResult.issues == fake.issues
+    assert result.vagueness.level == "vague"
+
+#A short prompt that deleting filler can fix still gets the free local rewrite
+def test_runPipeline_short_prompt_still_gets_local_rewrite(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"])
+    monkeypatch.setattr(orchestrator, "MIN_TOKENS_FOR_OPTIMIZER", 1000)
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.optimizerCalls == []
+    assert result.wasOptimized is True
+
+#A local rewrite that saves almost nothing doesn't stop the Optimizer from trying for more
+def test_runPipeline_low_saving_local_rewrite_goes_to_optimizer(fakeAgents, monkeypatch):
+    prompt = ("I'm writing a literature review on sleep and memory in adolescents and I'd really appreciate it if you "
+              "could give me an overview of the main findings from the last ten years. Please only include peer-reviewed "
+              "sources and include citations in APA format. If you're not sure that a source is real, say so.")
+    assert realLocalRewrite(prompt).tokensSaved < orchestrator.MIN_TOKENS_SAVED
+    fake = fakeAgents(issues=["filler"], rewrites=[(prompt, 0)])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    orchestrator.runPipeline(prompt)
+
+    assert len(fake.optimizerCalls) == 1
+
+CHAT_PROMPT ="Hey, could you please suggest some fun weekend plans for me? Thanks so much!"
 CODE_PROMPT = "Hey, could you please fix this, thanks so much!\n```python\ndef add(a, b): return a - b\n```"
 CODE_REWRITE = "Fix this:\n```python\ndef add(a, b): return a - b\n```"
 
@@ -387,3 +452,172 @@ def test_runPipeline_type_without_optimize_skips_optimizer(fakeAgents, monkeypat
     assert fake.optimizerCalls == []
     assert result.finalPrompt == CHAT_PROMPT
     assert result.wasOptimized is False
+
+#When deleting filler fixes everything, the local rewrite is returned without calling Agent 2 or 3
+def test_runPipeline_local_rewrite_skips_optimizer_and_validator(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.optimizerCalls == []
+    assert fake.validatorCalls == []
+    assert result.wasOptimized is True
+    assert result.finalPrompt == REWRITE
+    assert result.tokensSaved > 0
+    assert len(result.attempts) == 1 and result.attempts[0].passed
+
+#A type that may not be optimized never gets the local rewrite either
+def test_runPipeline_local_rewrite_respects_optimize_false(fakeAgents, monkeypatch):
+    for promptType, profile in list(PROFILES.items()):
+        monkeypatch.setitem(PROFILES, promptType, replace(profile, optimize=False))
+    fakeAgents(issues=["filler"])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline(PROMPT)
+    assert result.wasOptimized is False
+
+#An Optimizer rewrite that only deleted filler passes without a Validator call
+def test_runPipeline_filler_only_rewrite_skips_validator(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"], rewrites=[(REWRITE, 12)])
+    monkeypatch.setattr(orchestrator, "isFillerOnlyEdit", realIsFillerOnlyEdit)
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.validatorCalls == []
+    assert result.finalPrompt == REWRITE
+    assert result.attempts[0].passed
+
+#A rewrite that rewords anything still goes to the Validator
+def test_runPipeline_reworded_rewrite_is_validated(fakeAgents, monkeypatch):
+    reworded = "Write a brief dragon story."
+    fake = fakeAgents(issues=["filler"], rewrites=[(reworded, 12)], verdicts=[(True, "Fine.")])
+    monkeypatch.setattr(orchestrator, "isFillerOnlyEdit", realIsFillerOnlyEdit)
+    orchestrator.runPipeline(PROMPT)
+    assert fake.validatorCalls == [reworded]
+
+VAGUE_PROMPT = "Hi! Could you please write a blog post about remote work for me? Thanks so much!"
+LOCAL_REWRITE = OptimizationResult(originalPrompt=PROMPT, optimizedPrompt=REWRITE, originalTokens=20, optimizedTokens=8,
+                                   tokensSaved=12, percentSaved=60.0, changes=["removed politeness and filler"])
+
+def askResult(prompt, questions):
+    return OptimizationResult(originalPrompt=prompt, optimizedPrompt=prompt, originalTokens=20, optimizedTokens=20,
+                              tokensSaved=0, percentSaved=0.0, action="ask_user", questions=questions)
+
+#The Optimizer is offered the vagueness questions, and when it asks, nothing is rewritten or validated
+def test_runPipeline_optimizer_asks(fakeAgents):
+    fake = fakeAgents(issues=["filler"], rewrites=[askResult(VAGUE_PROMPT, ["Who is it for?"])])
+    result = orchestrator.runPipeline(VAGUE_PROMPT)
+
+    assert fake.offers[0]["questions"] == result.vagueness.questions and result.vagueness.questions
+    assert fake.offers[0]["maxQuestions"] == orchestrator.MAX_ANSWERED_QUESTIONS
+    assert fake.validatorCalls == []
+    assert result.needsClarification is True
+    assert result.questions == ["Who is it for?"]
+    assert result.finalPrompt == VAGUE_PROMPT
+    assert result.wasOptimized is False
+
+#A local rewrite that leaves other issues is offered to the Optimizer, and choosing it skips the Validator
+def test_runPipeline_optimizer_chooses_local_rewrite(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler", "long sentences"], rewrites=[replace(LOCAL_REWRITE, action="local")])
+    monkeypatch.setattr(orchestrator, "localRewrite", lambda *args, **kwargs: LOCAL_REWRITE)
+    monkeypatch.setattr(orchestrator, "runRuleCheck", lambda *args: ["long sentences"])
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert fake.offers[0]["localResult"] is LOCAL_REWRITE
+    assert fake.validatorCalls == []
+    assert result.wasOptimized is True
+    assert result.finalPrompt == REWRITE
+    assert result.attempts[-1].passed
+
+#A local rewrite that saves too little isn't offered
+def test_runPipeline_low_saving_local_rewrite_not_offered(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler"], rewrites=[(PROMPT, 0)])
+    monkeypatch.setattr(orchestrator, "localRewrite", lambda *args, **kwargs: replace(LOCAL_REWRITE, tokensSaved=2))
+    orchestrator.runPipeline(PROMPT)
+    assert fake.offers[0]["localResult"] is None
+
+#When no LLM rewrite passes, the local rewrite is returned instead of the original
+def test_runPipeline_falls_back_to_local_rewrite(fakeAgents, monkeypatch):
+    fake = fakeAgents(issues=["filler", "long sentences"], rewrites=[("Compose a short story about a dragon.", 10)] * 2,
+                      verdicts=[(False, "Changed the genre.")] * 2)
+    monkeypatch.setattr(orchestrator, "localRewrite", lambda *args, **kwargs: LOCAL_REWRITE)
+    monkeypatch.setattr(orchestrator, "runRuleCheck", lambda *args: ["long sentences"])
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert len(fake.validatorCalls) == 2
+    assert result.finalPrompt == REWRITE
+    assert result.wasOptimized is True
+    assert result.error is None
+
+#A failed API call still falls back to the local rewrite, and keeps the error
+def test_runPipeline_api_error_falls_back_to_local_rewrite(fakeAgents, monkeypatch):
+    fakeAgents(issues=["filler", "long sentences"])
+    def fail(*args, **kwargs):
+        raise APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    monkeypatch.setattr(orchestrator, "optimizePrompt", fail)
+    monkeypatch.setattr(orchestrator, "localRewrite", lambda *args, **kwargs: LOCAL_REWRITE)
+    monkeypatch.setattr(orchestrator, "runRuleCheck", lambda *args: ["long sentences"])
+    result = orchestrator.runPipeline(PROMPT)
+
+    assert result.finalPrompt == REWRITE
+    assert result.error.startswith("Optimizer call failed")
+
+ANSWERS = [Answer("How long should the blog post be?", "300 words"), Answer("Who is it for?", "remote managers")]
+CLARIFIED = ("Write a blog post about remote work.\n\nHow long should the blog post be? 300 words\n"
+             "Who is it for? remote managers")
+
+#Answers are added to the prompt, the Optimizer runs even with no audit issues, and the rewrite is checked
+#against the prompt plus the answers, so the numbers they give may be used
+def test_runPipeline_with_answers(fakeAgents):
+    merged = "Write a 300-word blog post about remote work for remote managers."
+    fake = fakeAgents(issues=[], rewrites=[(merged, 3)], verdicts=[(True, "Answers worked in.")])
+    result = orchestrator.runPipeline("Write a blog post about remote work.", answers=ANSWERS)
+
+    assert fake.prompts == [CLARIFIED]
+    assert fake.offers[0]["answers"] == ANSWERS
+    assert fake.offers[0]["checkAgainst"] == "Write a blog post about remote work.\n\n300 words\nremote managers"
+    assert fake.offers[0]["maxQuestions"] == orchestrator.MAX_ANSWERED_QUESTIONS - 2
+    assert fake.validatorCalls == [merged]
+    assert result.originalPrompt == "Write a blog post about remote work."
+    assert result.finalPrompt == merged
+
+#With answers, a rewrite that drops one is rejected without a Validator call
+def test_runPipeline_answer_dropped_is_rejected(fakeAgents):
+    fake = fakeAgents(issues=[], rewrites=[("Write a blog post about remote work for remote managers.", 3)] * 2)
+    result = orchestrator.runPipeline("Write a blog post about remote work.", answers=ANSWERS)
+
+    assert fake.validatorCalls == []
+    assert '"300"' in fake.rejectedCalls[1][0].reason
+    assert result.finalPrompt == CLARIFIED
+
+#With answers, no passing rewrite returns the prompt with the answers, not the bare original
+def test_runPipeline_answers_kept_when_no_rewrite(fakeAgents):
+    fakeAgents(issues=[], rewrites=[(CLARIFIED, 0)])
+    result = orchestrator.runPipeline("Write a blog post about remote work.", answers=ANSWERS)
+    assert result.finalPrompt == CLARIFIED
+    assert result.wasOptimized is False
+
+#Blank answers are ignored, so they neither change the prompt nor force an Optimizer call
+def test_runPipeline_blank_answers_ignored(fakeAgents):
+    fake = fakeAgents(issues=[])
+    result = orchestrator.runPipeline(PROMPT, answers=[Answer("Who is it for?", "  ")])
+    assert fake.optimizerCalls == []
+    assert result.finalPrompt == PROMPT
+
+#Once MAX_ANSWERED_QUESTIONS are answered, ask_user isn't offered again
+def test_runPipeline_stops_asking_after_cap(fakeAgents, monkeypatch):
+    monkeypatch.setattr(orchestrator, "MAX_ANSWERED_QUESTIONS", 2)
+    fake = fakeAgents(issues=[], rewrites=[(CLARIFIED, 0)])
+    orchestrator.runPipeline("Write a blog post about remote work.", answers=ANSWERS)
+    assert fake.offers[0]["maxQuestions"] == 0
+
+#With answers, the local rewrite is made from the person's prompt and the answers added after it,
+#so closing thanks before the answers are still deleted
+def test_runPipeline_local_rewrite_with_answers(fakeAgents, monkeypatch):
+    prompt = "Hi there! Could you please write a blog post about remote work? I would really appreciate it, thanks so much!"
+    answers = [Answer("Who is it for?", "Team leads at small startups")]
+    fake = fakeAgents(issues=[], rewrites=[(orchestrator.clarifyPrompt(prompt, answers), 0)])
+    monkeypatch.setattr(orchestrator, "localRewrite", realLocalRewrite)
+    result = orchestrator.runPipeline(prompt, answers=answers)
+
+    assert fake.offers[0]["localResult"].optimizedPrompt == result.finalPrompt
+    assert result.finalPrompt == "Write a blog post about remote work.\n\nWho is it for? Team leads at small startups"
+    assert result.wasOptimized is True

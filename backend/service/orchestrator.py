@@ -8,6 +8,7 @@ from supabase import Client
 
 from agents.hooks.orchestrator import OrchestrationHooks
 from agents.orchestrator import OrchestrationResult, runPipeline
+from agents.optimizer import Answer
 from agents.validator import ValidationResult
 from repository.context import create_contexts
 from repository.llm_call import create_llm_call
@@ -39,6 +40,7 @@ class RunOrchestrator(OrchestrationHooks):
     context: list[ContextCreate] = field(default_factory=list)
     validator_pass_score: int | None = None
     max_optimization_attempts: int = 2
+    answers: list[Answer] = field(default_factory=list)
     run_id: int | None = field(default=None, init=False)
     status: str = field(default="pending", init=False)
     last_optimized_prompt_id: int | None = field(default=None, init=False)
@@ -87,6 +89,7 @@ class RunOrchestrator(OrchestrationHooks):
                 self.prompt,
                 self.target,
                 hook=self,
+                answers=self.answers,
                 passScore=self.validator_pass_score,
                 maxAttempts=self.max_optimization_attempts,
             )
