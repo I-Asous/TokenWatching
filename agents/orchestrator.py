@@ -8,7 +8,7 @@ from anthropic import APIError
 from agents.auditor import auditPrompt, runRuleCheck, AuditResult
 from agents.optimizer import (optimizePrompt, findRewriteProblems, rewriteResult, OptimizationResult,
                               RejectedAttempt, Answer, Rewrite)
-from agents.validator import validatePrompt, ValidationResult
+from agents.validator import validatePrompt, ValidationResult, ValidatorReplyError
 from agents.locks import extractLocks
 from agents.local_rewrite import localRewrite, isFillerOnlyEdit
 from agents.intent import detectIntent, describeIntent
@@ -143,6 +143,12 @@ def withAnswers(localResult: OptimizationResult, clarified: str, answers: list[A
                    originalTokens=originalTokens, optimizedTokens=optimizedTokens, tokensSaved=tokensSaved,
                    percentSaved=round(tokensSaved / originalTokens * 100, 2) if originalTokens else 0.0)
 
+#Whether the local checks can read the prompt. They only parse English (intent.py), so for any other language a
+#rewrite's tasks and options go unchecked and the Optimizer isn't called. Without the spaCy model it counts as English
+def isEnglish(prompt: str) -> bool:
+    intent = detectIntent(prompt)
+    return intent is None or intent.isEnglish
+
 #A rewrite saves enough to be worth a Validator call, a retry or offering it to the Optimizer
 def savesEnough(optimizationResult: OptimizationResult) -> bool:
     return optimizationResult.tokensSaved >= MIN_TOKENS_SAVED and optimizationResult.percentSaved >= MIN_PERCENT_SAVED
@@ -156,7 +162,8 @@ def savesEnough(optimizationResult: OptimizationResult) -> bool:
 *    Validator with the prompt type's pass score and rules.
 * 3. Every validation is added to attempts; a failed one also to rejectedAttempts, a passed one to accepted
 *    (by rewrite text), so the orchestrator uses that verdict instead of validating the rewrite again.
-* 4. A failed Validator call sets apiFailed and is raised, so the run's error says the Validator failed.
+* 4. A failed Validator call (or an unusable reply, ValidatorReplyError) sets apiFailed and is raised, so the
+*    run's error says the Validator failed.
 """
 class SubmissionValidator:
     def __init__(self, clarified: str, target: str, passScore: int, typeRules: str, hook: OrchestrationHooks,
@@ -181,7 +188,7 @@ class SubmissionValidator:
             try:
                 validation = validatePrompt(self.clarified, draft.optimizedPrompt,
                                             passScore=self.passScore, typeRules=self.typeRules)
-            except APIError:
+            except (APIError, ValidatorReplyError):
                 self.apiFailed = True
                 raise
         self.hook.saveValidation(validation)
@@ -259,7 +266,8 @@ def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, au
 * 1c. Otherwise, if the Auditor found no issues, the original prompt is returned unchanged with no LLM
 *    call. With answers, the Optimizer always runs, since working them into the prompt is what the person asked for.
 * 1d. A prompt under MIN_TOKENS_FOR_OPTIMIZER tokens is returned unchanged with no Optimizer call
-*    (unless it has answers).
+*    (unless it has answers). So is a prompt that isn't English, answers or not (isEnglish): the local
+*    checks can't read it, so nothing would catch a rewrite that dropped a task or an option.
 * 2. the Optimizer produces a rewrite using the Auditor's
 *    issues, the type's rules and the list of what this prompt must keep (buildMustPreserve),
 *    plus, on retries, every earlier rewrite the Validator rejected along with its reason.
@@ -342,7 +350,8 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
         hook.finishJob(orchestrationResult)
         return orchestrationResult
 
-    if (not auditResult.issues or auditResult.token_count < MIN_TOKENS_FOR_OPTIMIZER) and not answers:
+    if ((not auditResult.issues or auditResult.token_count < MIN_TOKENS_FOR_OPTIMIZER) and not answers
+            or not isEnglish(prompt)):
         orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes)
         hook.finishJob(orchestrationResult)
         return orchestrationResult
@@ -371,7 +380,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
                                                 minTokensSaved=0 if answers else MIN_TOKENS_SAVED,
                                                 minPercentSaved=0.0 if answers else MIN_PERCENT_SAVED,
                                                 validate=submissionValidator)
-        except APIError as apiError:
+        except (APIError, ValidatorReplyError) as apiError:
             agent = "Validator" if submissionValidator.apiFailed else "Optimizer"
             error = f"{agent} call failed: {apiError}"
             logger.warning("%s, returning the original prompt", error)
@@ -441,7 +450,7 @@ def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHo
                 validationResult = validatePrompt(clarified, optimizationResult.optimizedPrompt,
                                                   passScore=profile.passScore,
                                                   typeRules=profile.optimizerRules)
-            except APIError as apiError:
+            except (APIError, ValidatorReplyError) as apiError:
                 error = f"Validator call failed: {apiError}"
                 logger.warning("%s, returning the original prompt", error)
                 break

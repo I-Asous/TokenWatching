@@ -210,14 +210,6 @@ OPTIMIZER_EXAMPLES = [
              unchanged=False,
              optimizedPrompt="Explain recursion to a 10-year-old in simple words.",
              changes=["merged three instructions that all asked for simplicity"])),
-    #The prompt's language is kept
-    ("Hola, ¿me podrías ayudar por favor a escribir un correo a mi jefe pidiendo el viernes libre? "
-     "Muchas gracias de antemano.",
-     Rewrite(preservedConstraints=["email to my boss", "asking for Friday off", "written in Spanish"],
-             unchanged=False,
-             optimizedPrompt="Escribe un correo a mi jefe pidiendo el viernes libre.",
-             changes=["removed greeting and thanks", "turned the request into a direct instruction",
-                      "kept the prompt in Spanish"])),
 ]
 
 """

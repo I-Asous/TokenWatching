@@ -8,22 +8,28 @@ from agents.validator import ValidationResult
 
 
 #Fake Anthropic client that records the request and returns a canned reply
+#Haiku 5.5 thinks by default, so the reply starts with a thinking block (empty text, as the API returns it)
 class FakeMessages:
-    def __init__(self, reply):
+    def __init__(self, reply, stopReason="end_turn", thinking=True):
         self.reply = reply
+        self.stopReason = stopReason
+        self.thinking = thinking
         self.calls = 0
         self.lastRequest = None
 
     def create(self, **kwargs):
         self.calls += 1
         self.lastRequest = kwargs
-        return SimpleNamespace(content=[SimpleNamespace(text=self.reply)])
+        content = [SimpleNamespace(type="thinking", thinking="", signature="sig")] if self.thinking else []
+        if self.reply is not None:
+            content.append(SimpleNamespace(type="text", text=self.reply))
+        return SimpleNamespace(content=content, stop_reason=self.stopReason)
 
 
 @pytest.fixture
 def fakeClient(monkeypatch):
-    def install(reply):
-        fake = SimpleNamespace(messages=FakeMessages(reply))
+    def install(reply, stopReason="end_turn", thinking=True):
+        fake = SimpleNamespace(messages=FakeMessages(reply, stopReason, thinking))
         monkeypatch.setattr(validator, "client", fake)
         return fake.messages
     return install
@@ -95,6 +101,33 @@ def test_callValidatorLLM_sends_system_prompt(fakeClient):
     userContent = messages.lastRequest["messages"][0]["content"]
     assert "Please write a poem." in userContent
     assert "Write a poem." in userContent
+
+#The verdict is read from the text block, after any thinking block, at low effort
+def test_callValidatorLLM_skips_thinking_block(fakeClient):
+    messages = fakeClient("SCORE: 8\nPASSED: Yes\nREASON: Only filler was removed.")
+    result = validator.callValidatorLLM("Please write a poem.", "Write a poem.")
+
+    assert result == (8.0, True, "Only filler was removed.", "")
+    assert messages.lastRequest["output_config"] == {"effort": validator.VALIDATOR_EFFORT}
+    assert messages.lastRequest["model"] == validator.VALIDATOR_MODEL
+
+#A reply without thinking is read the same way
+def test_callValidatorLLM_without_thinking(fakeClient):
+    fakeClient("SCORE: 7\nPASSED: Yes\nREASON: Fine.", thinking=False)
+    assert validator.callValidatorLLM("Please write a poem.", "Write a poem.") == (7.0, True, "Fine.", "")
+
+#A reply cut off by max_tokens, refused, or with no text raises instead of scoring the rewrite 1
+@pytest.mark.parametrize("reply, stopReason", [
+    ("READ: - a poem\nANSWER: yes\nTHI", "max_tokens"),
+    (None, "max_tokens"),
+    (None, "refusal"),
+    (None, "end_turn"),
+    ("   ", "end_turn"),
+])
+def test_callValidatorLLM_unusable_reply_raises(fakeClient, reply, stopReason):
+    fakeClient(reply, stopReason)
+    with pytest.raises(validator.ValidatorReplyError):
+        validator.callValidatorLLM("Please write a poem.", "Write a poem.")
 
 #Identical prompts pass automatically without calling the LLM
 def test_validatePrompt_identical_skips_llm(fakeClient):

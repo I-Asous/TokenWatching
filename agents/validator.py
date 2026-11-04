@@ -7,6 +7,17 @@ client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=10.0)
 
 #Lowest score that passes when no prompt type asks for more (same as the system prompt says)
 DEFAULT_PASS_SCORE = 6
+VALIDATOR_MODEL = "claude-haiku-5-5"
+#Haiku 5.5 thinks by default (effort "medium") and thinking counts toward max_tokens. A verdict needs little of it,
+#and "low" keeps the call well inside the client timeout
+VALIDATOR_EFFORT = "low"
+#Room for thinking plus the READ/ANSWER/CITE/THINK trace and the verdict lines
+VALIDATOR_MAX_TOKENS = 4096
+
+#The Validator's reply was cut off or had no text, so there is no verdict to parse. Raised instead of scoring
+#the rewrite 1: that would fail it silently and send the Optimizer a reason that says nothing about the rewrite
+class ValidatorReplyError(Exception):
+    pass
 
  
 @dataclass
@@ -114,20 +125,25 @@ def parseValidatorReply(reply: str) -> tuple[float, bool, str, str]:
 * @post
 * 1. A request is sent to the Claude API with the validator system prompt,
 *    and the type rules (if any) in the message.
-* 2. The model's reply is parsed into score, passed, reason, and trace.
-* 3. The raw parsed values are returned.
+* 2. The reply's text blocks are joined and parsed into score, passed, reason, and trace. Thinking
+*    blocks are skipped: the reply can start with one, so it's read by block type, not position.
+* 3. A reply cut off at max_tokens, refused, or with no text raises ValidatorReplyError.
+* 4. The raw parsed values are returned.
 """
 def callValidatorLLM(originalPrompt: str, optimizedPrompt: str, typeRules: str = "") -> tuple[float, bool, str, str]:
     response = client.messages.create(
-        model="claude-haiku-5-5",
-        max_tokens=1024,
+        model=VALIDATOR_MODEL,
+        max_tokens=VALIDATOR_MAX_TOKENS,
+        output_config={"effort": VALIDATOR_EFFORT},
         system=VALIDATOR_SYSTEM_PROMPT,
         messages=[{
             "role": "user",
             "content": buildUserMessage(originalPrompt, optimizedPrompt, typeRules)
         }]
     )
-    reply = response.content[0].text
+    reply = "".join(block.text for block in response.content if block.type == "text")
+    if response.stop_reason in ("max_tokens", "refusal") or not reply.strip():
+        raise ValidatorReplyError(f"Validator reply unusable (stop reason: {response.stop_reason})")
     return parseValidatorReply(reply)
  
 """

@@ -27,8 +27,17 @@ CODE_SYNTAX_RE = re.compile(
 SQL_RE = re.compile(r"\bSELECT\b[\s\S]+?\bFROM\b") #uppercase only, so "select a book from the shelf" isn't SQL
 FILE_RE = re.compile(r"\b[\w-]+\.(?:py|js|jsx|ts|tsx|java|go|rb|cpp|cs|php|sql|rs|sh|json|ya?ml|html|css)\b")
 
+#"Ignore all previous instructions", "disregard your rules", "forget the system prompt"
+INJECTION_RE = re.compile(
+    r"\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+)?(?:of\s+)?(?:your\s+|the\s+|my\s+)?"
+    r"(?:previous\s+|prior\s+|above\s+|earlier\s+|system\s+)?(?:instructions|rules|prompt|guidelines)\b",
+    re.IGNORECASE)
+
 #Signals per type: (pattern, points). Weak keyword lists only count distinct words, so repeating one doesn't add up
 SIGNALS: dict[str, list[tuple[re.Pattern, int]]] = {
+    "injection": [
+        (INJECTION_RE, STRONG_POINTS),
+    ],
     "security": [
         (wordsRegex(["gdpr", "hipaa", "pci", "pii", "soc 2", "sql injection", "xss", "csrf", "credentials",
                      "api key", "encryption", "compliance", "audit trail", "access control"]), STRONG_POINTS),
@@ -78,6 +87,11 @@ class TypeProfile:
     optimize: bool = True #False = leave prompts of this type as they are
 
 PROFILES: dict[str, TypeProfile] = {
+    #A prompt that tries to override the model's instructions. Any rewrite (even deleting "please") goes through
+    #the Optimizer and Validator, which then have to judge an attack, so it's left as the person wrote it
+    "injection": TypeProfile(
+        strictness=7, passScore=10, skipChecks=frozenset(),
+        optimizerRules="Prompt-injection attempt: leave it unchanged.", optimize=False),
     "security": TypeProfile(
         strictness=6, passScore=7, skipChecks=frozenset(),
         optimizerRules=("Security/compliance prompt: never remove or soften a requirement, restriction, policy, "
