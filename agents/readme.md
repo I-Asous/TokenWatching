@@ -101,7 +101,7 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 
 ## Agent 2 — Optimizer (`optimizer.py`)
 
-### Status: Moved to `claude-haiku-5-5` (11/4/2026). The Validator and the minimum saving now run inside the tool loop, so the model revises after a Validator rejection in the same conversation (11/3/2026). Tool-using agent since 10/30/2026. Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
+### Status: Thinking off, and the minimum saving stated in the message up front (11/4/2026, not yet confirmed with an eval run). Moved to `claude-haiku-5-5` (11/4/2026). The Validator and the minimum saving now run inside the tool loop, so the model revises after a Validator rejection in the same conversation (11/3/2026). Tool-using agent since 10/30/2026. Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
 
 ### Tool loop (10/27/2026, reduced 10/30/2026, Validator moved in 11/3/2026)
 
@@ -109,7 +109,7 @@ The Optimizer used to make one structured-output call. Its rewrite was only chec
 
 - `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop once accepted. `findSubmissionProblems()` checks a changed rewrite, cheapest first, and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again:
   1. `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`)
-  2. The saving, with the target's tokenizer, against `minTokensSaved` / `minPercentSaved` (the orchestrator passes `MIN_TOKENS_SAVED` / `MIN_PERCENT_SAVED`, or 0 with answers, which refuses only a longer rewrite). The refusal gives the measured saving, so the model can cut more or submit unchanged
+  2. The saving, with the target's tokenizer, against `minTokensSaved` / `minPercentSaved` (the orchestrator passes `MIN_TOKENS_SAVED` / `MIN_PERCENT_SAVED`, or 0 with answers, which refuses only a longer rewrite). The refusal gives the measured saving, so the model can cut more or submit unchanged. Since 11/4 the message also states the bar before the first submission: the prompt's token count and the fewest tokens a changed rewrite must cut (`tokensToSave()`, the larger of the two minimums). The model can't count tokens, so before this it learned the bar only from refusals, one turn each: in the phase3 eval `multi-translate` spent 3 turns on them and saved nothing, and 16 Optimizer runs took 25 turns
   3. `validate`, when the caller passes one: the orchestrator's `SubmissionValidator`, which runs the Validator (or passes a filler-only edit without it). A failed verdict is refused with the Validator's reasoning and how many reviews are left. At most `MAX_VALIDATIONS = 2` per run; once they're all used and the last failed, the loop stops
 - A submission identical to the prompt counts as unchanged, so it never spends a validation
 
@@ -120,6 +120,7 @@ Design decisions:
 - **The orchestrator owns validation:** it passes `validate` (a `SubmissionValidator`), so the pass score, type rules, the filler-only skip, the hooks and the stage updates stay in `orchestrator.py`, and the Optimizer doesn't import `local_rewrite` (which imports it). Each draft is saved as an optimization before its validation, as before, so the backend links every verdict to the rewrite it judged
 - **Manual loop, not the SDK's tool runner:** the loop has to end on a submit call rather than on `end_turn`, and it needs a hard cap. A manual loop does both and is easy to fake in tests.
 - **`MAX_TOOL_TURNS = 4` API calls per run** (3 before 11/3): a submission plus fixes after local, saving or Validator refusals. If no submission is accepted in time, the original prompt is kept. The orchestrator's outer retry no longer runs for a real Optimizer (it validates its own submissions), so one prompt costs at most 4 Optimizer calls and 2 Validator calls, down from 6 and 2. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
+- **Thinking off (`OPTIMIZER_THINKING`, 11/4/2026):** at effort `low` the Optimizer still wrote ~537 output tokens a turn in the phase3 eval, mostly thinking, for a rewrite of ~20 tokens. Output tokens were 60% of the pipeline's spend there, nearly all of them the Optimizer's (the Validator writes ~52 a call). The `Rewrite` schema puts `preservedConstraints` first, so the model still lists what it must keep before it writes. Haiku 5.5 accepts disabled thinking only at effort `high` or below (a test guards this). Go back to `{"type": "adaptive"}` if the eval shows worse rewrites.
 - **No forced `tool_choice`:** Sonnet 5.5 returns a 400 for it. The system prompt says to always finish with `submit_rewrite`, and a turn with no tool call gets one reminder.
 - **Every tool is `strict: true`**, so tool inputs always match their schema. `submit_rewrite`'s schema is generated from `Rewrite`, so the two can't drift apart.
 - **Caching:** the system prompt keeps its breakpoint, and top-level `cache_control` caches the growing conversation, so each turn pays full price only for what's new.
@@ -226,6 +227,10 @@ Offline, no API key needed. The fake client records the request and returns a ca
 | `test_buildUserMessage_without_rejected_attempts`        | No rejected attempts → no rejection section                                                                        |
 | `test_optimizePrompt_forwards_rejected_attempts`         | Rejected attempts given to `optimizePrompt()` reach the LLM request                                               |
 | `test_callOptimizerLLM_sends_system_prompt_and_strips`   | The system prompt and schema are sent, and whitespace is stripped from the rewrite                                  |
+| `test_disabled_thinking_uses_an_accepted_effort`         | Thinking is only disabled at an effort Haiku 5.5 accepts it with (`high` or below)                                  |
+| `test_buildUserMessage_with_saving_minimum`              | With a minimum saving, the prompt's token count and the fewest tokens to cut come before the prompt                |
+| `test_buildUserMessage_without_saving_minimum`           | No minimum, or a zero one (a prompt with answers), adds no saving line (parametrized)                               |
+| `test_tokensToSave_matches_the_saving_check`             | The number asked for is the saving check's own bar: a rewrite cutting exactly that many passes, one less is refused |
 | `test_optimizePrompt_computes_savings`                   | Token counts, tokens saved and percent saved are correct                                                            |
 | `test_optimizePrompt_unchanged_keeps_original`           | A prompt marked unchanged keeps the original text, even if the LLM rewrote it anyway                                |
 | `test_optimizePrompt_unusable_reply_keeps_original`      | A refused, truncated or unparseable reply falls back to the original (parametrized)                                 |

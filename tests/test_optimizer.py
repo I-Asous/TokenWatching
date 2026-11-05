@@ -134,10 +134,16 @@ def test_callOptimizerLLM_sends_system_prompt_and_strips(fakeClient):
     assert messages.lastRequest["tools"] is optimizer.OPTIMIZER_TOOLS
     assert messages.lastRequest["cache_control"] == {"type": "ephemeral"}
     assert messages.lastRequest["output_config"] == {"effort": optimizer.OPTIMIZER_EFFORT}
+    assert messages.lastRequest["thinking"] == optimizer.OPTIMIZER_THINKING
     assert messages.lastRequest["model"] == optimizer.OPTIMIZER_MODEL
     userContent = messages.lastRequest["messages"][0]["content"]
     assert "- Filler words" in userContent
     assert "Please write a poem." in userContent
+
+#Haiku 5.5 returns a 400 for disabled thinking above effort "high"
+def test_disabled_thinking_uses_an_accepted_effort():
+    if optimizer.OPTIMIZER_THINKING["type"] == "disabled":
+        assert optimizer.OPTIMIZER_EFFORT in ("low", "medium", "high")
 
 #A shorter rewrite produces correct token savings and percent
 def test_optimizePrompt_computes_savings(fakeClient):
@@ -496,10 +502,37 @@ def test_submission_saving_too_little_is_refused(fakeClient):
     messages = fakeClient([submitTurn(makeRewrite(POLITE.replace("Hi there! ", ""))),
                            submitTurn(makeRewrite(POLITE, unchanged=True, changes=[]), "toolu_2")])
     result = optimizer.optimizePrompt(POLITE, minTokensSaved=10, minPercentSaved=2.0)
+    assert "must cut at least 10 of them" in messages.requests[0]["messages"][0]["content"]
     [refusal] = toolResults(messages, 1)
     assert refusal["is_error"] is True
     assert "saves 3 tokens" in refusal["content"] and "at least 10 tokens" in refusal["content"]
     assert result.optimizedPrompt == POLITE
+
+#With a minimum saving, the message gives the prompt's size and the fewest tokens to cut, before the prompt
+def test_buildUserMessage_with_saving_minimum():
+    context = optimizer.ToolContext(minTokensSaved=5, minPercentSaved=2.0)
+    message = optimizer.buildUserMessage(POLITE, [], context=context)
+    assert f"This prompt is {optimizer.countTokens(POLITE)} tokens" in message
+    assert "must cut at least 5 of them" in message
+    assert message.index("must cut") < message.index("PROMPT TO OPTIMIZE")
+
+#No minimum, or a zero one (a prompt with answers), adds no saving line
+@pytest.mark.parametrize("minimum", [None, 0])
+def test_buildUserMessage_without_saving_minimum(minimum):
+    context = optimizer.ToolContext(minTokensSaved=minimum)
+    assert "must cut" not in optimizer.buildUserMessage(POLITE, [], context=context)
+
+#The number the message asks for is the saving check's own bar: the larger of the token and percent minimums.
+#A rewrite cutting exactly that many passes, one token less is refused
+def test_tokensToSave_matches_the_saving_check(monkeypatch):
+    counts = {"short": 30, "long": 400, "cut 8": 392, "cut 7": 393}
+    monkeypatch.setattr(optimizer, "countTokens", lambda text, target: counts[text])
+    monkeypatch.setattr(optimizer, "findRewriteProblems", lambda original, rewrite: [])
+    context = optimizer.ToolContext(minTokensSaved=5, minPercentSaved=2.0)
+    assert optimizer.tokensToSave("short", context) == 5
+    assert optimizer.tokensToSave("long", context) == 8
+    assert optimizer.findSubmissionProblems(makeRewrite("cut 8"), "long", context) is None
+    assert optimizer.findSubmissionProblems(makeRewrite("cut 7"), "long", context).startswith("Refused")
 
 #With a zero minimum (a prompt with answers), only a rewrite longer than the prompt is refused
 def test_submission_longer_than_prompt_is_refused():

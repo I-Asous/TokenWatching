@@ -1,4 +1,5 @@
 import os
+import math
 import logging
 import textwrap
 from collections.abc import Callable
@@ -26,10 +27,15 @@ MAX_TOOL_TURNS = 4
 #Most Validator calls in one run when the caller validates submissions (ToolContext.validate). Each takes
 #10-20 seconds while the person waits; 2 matches the orchestrator's old budget of one retry. Tune on real runs
 MAX_VALIDATIONS = 2
-#Haiku 5.5 defaults to "medium", which thinks longer than a few-sentence rewrite needs, and the user is waiting
+#Haiku 5.5 defaults to "medium", which spends more tokens than a few-sentence rewrite needs, and the user is waiting
 #before hitting enter. "low" is safe here: submit_rewrite refuses anything findRewriteProblems rejects at any
 #effort, and the Validator still checks meaning. Step up to "medium" if live runs show worse rewrites
 OPTIMIZER_EFFORT = "low"
+#Thinking off (11/4/2026). At effort "low" the Optimizer still wrote ~537 output tokens a turn in the phase3 eval,
+#mostly thinking, for a rewrite of ~20 tokens: the largest single cost in the pipeline. The Rewrite schema lists
+#preservedConstraints first, so the model still works out what to keep before it writes the rewrite. Haiku 5.5
+#accepts "disabled" only at effort "high" or below. Go back to {"type": "adaptive"} if the eval shows worse rewrites
+OPTIMIZER_THINKING = {"type": "disabled"}
 
  
 @dataclass
@@ -77,6 +83,13 @@ class ToolContext:
     #type rules). A failed one is refused with the reasoning. None accepts it without validating
     validate: Callable[["Rewrite"], ValidationResult] | None = None
     validations: int = 0 #validate calls made this run, at most MAX_VALIDATIONS
+
+#Fewest tokens a changed rewrite of prompt must cut to pass findSubmissionProblems' saving check, or 0 with no minimum
+def tokensToSave(prompt: str, context: ToolContext) -> int:
+    if context.minTokensSaved is None:
+        return 0
+    return max(context.minTokensSaved,
+               math.ceil(countTokens(prompt, context.target) * context.minPercentSaved / 100))
 
 #A choice that ends the run without a submitted rewrite: "local" or "ask_user"
 @dataclass
@@ -298,8 +311,11 @@ In the examples below, each output is what you'd pass to submit_rewrite.
 * 6. If use_local_rewrite is available, the local rewrite is shown in tags with what it saves.
 * 7. If earlier rewrites were rejected, each one is shown in tags with
 *    the Validator's reason, so the LLM sees exactly what it broke.
-* 8. The original prompt comes last, so it's what the LLM rewrites.
-* 9. A single combined string is returned.
+* 8. If the run has a minimum saving (tokensToSave above 0), the prompt's token count and the fewest
+*    tokens a changed rewrite must cut are given, so the model can mark a prompt it can't cut that far
+*    unchanged at once instead of spending a turn on the refusal.
+* 9. The original prompt comes last, so it's what the LLM rewrites.
+* 10. A single combined string is returned.
 """
 def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[RejectedAttempt] = None,
                      mustPreserve: list[str] = None, typeRules: str = "", answers: list[Answer] = None,
@@ -348,7 +364,14 @@ def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[Reje
             "Earlier rewrites were rejected for changing the prompt's meaning. "
             f"Fix these problems and don't repeat them:\n{rejectedList}\n"
         )
- 
+
+    savingSection = ""
+    needed = tokensToSave(prompt, context)
+    if needed:
+        savingSection = (f"This prompt is {countTokens(prompt, context.target)} tokens. A changed rewrite must cut "
+                         f"at least {needed} of them or it's refused. If you can't cut that many without changing "
+                         "the request, submit it unchanged.\n\n")
+
     return (
             f"{issuesSection}"
             f"{typeSection}"
@@ -357,6 +380,7 @@ def buildUserMessage(prompt: str, issues: list[str], rejectedAttempts: list[Reje
             f"{askSection}"
             f"{localSection}"
             f"{rejectedSection}"
+            f"{savingSection}"
             f"PROMPT TO OPTIMIZE:\n{prompt}"
             )
 
@@ -462,7 +486,7 @@ def runTool(name: str, toolInput: dict, prompt: str,
 * submits one that passes the local checks, saves enough and, when the caller validates, passes the Validator.
 * @post
 * 1. Each turn sends the conversation so far with the cached system prompt and
-*    the submit tool, at OPTIMIZER_EFFORT; the conversation itself is cached too, so a turn only pays
+*    the submit tool, at OPTIMIZER_EFFORT with OPTIMIZER_THINKING; the conversation itself is cached too, so a turn only pays
 *    full price for what's new. Cache reads and writes are logged.
 * 2. Every tool call in a turn is run, up to the first accepted one, and all results go back in one message.
 * 3. The first accepted tool call ends the loop. submit_rewrite returns its Rewrite, so a changed
@@ -498,6 +522,7 @@ def callOptimizerLLM(prompt: str, issues: list[str],
                 "cache_control": {"type": "ephemeral"},
             }],
             tools=OPTIMIZER_TOOLS,
+            thinking=OPTIMIZER_THINKING,
             output_config={"effort": OPTIMIZER_EFFORT},
             cache_control={"type": "ephemeral"},
             messages=messages,
