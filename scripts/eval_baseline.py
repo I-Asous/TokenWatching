@@ -5,6 +5,8 @@ Validator results, Optimizer turns, LLM calls, API tokens and latency. Makes rea
 
 Run it before changing the agents to get a baseline, then again after, and compare the two summaries.
 LLM output varies between runs, so use --repeat to average over a few runs before trusting a difference.
+The default eval set, evals/prompts.jsonl, is built by scripts/build_eval_set.py from evals/sources/: edit the
+sources and rebuild instead of editing the file, and use --only with a category to run a slice of it.
 
 Usage:
 python3 scripts/eval_baseline.py [--label baseline] [--repeat 1] [--only id-or-category ...] [--target chatgpt|claude]

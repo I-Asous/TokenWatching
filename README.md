@@ -137,7 +137,9 @@ TokenWatching/
 │   └── src/
 │
 ├── scripts/
-│   └── package_extension.py    # Validates manifest.json and zips the extension files
+│   ├── package_extension.py    # Validates manifest.json and zips the extension files
+│   ├── build_eval_set.py       # Builds evals/prompts.jsonl (1,000 labeled cases) from evals/sources/
+│   └── eval_baseline.py        # Runs the eval set through the pipeline and summarizes quality, calls and cost
 │
 ├── config/
 │   └── prices.yaml             # Per-model pricing and modifiers (to be wired into cost estimates)
