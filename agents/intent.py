@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from spacy.tokens import Span, Token
 from agents.auditor import loadNlp
@@ -60,6 +61,25 @@ FOREIGN_WORDS = frozenset({
     "der", "die", "das", "und", "ein", "eine", "einen", "mit", "ist", "nicht", "für", "über", "bitte",
     "il", "di", "che", "per", "della", "con", "sono", "grazie", "um", "uma", "não", "com", "obrigado",
 })
+#FOREIGN_WORDS only lists Latin-script words, so it can never catch a language written in another script
+#(Japanese, Chinese, Korean, Arabic, Russian, Hindi...): none of its words can appear, "foreign" stays 0, and
+#looksEnglish would default to True for text the English model can't read at all. Checked separately, by
+#script rather than by word, so one regex covers every non-Latin language instead of a per-language list
+NON_LATIN_SCRIPT_RE = re.compile(
+    "[" +
+    "Ѐ-ӿ"  # Cyrillic (Russian, ...)
+    "֐-׿"  # Hebrew
+    "؀-ۿ"  # Arabic
+    "ऀ-ॿ"  # Devanagari (Hindi, ...)
+    "぀-ヿ"  # Hiragana & Katakana (Japanese)
+    "㐀-䶿"  # CJK Unified Ideographs Extension A
+    "一-鿿"  # CJK Unified Ideographs (Chinese, Japanese kanji)
+    "가-힣"  # Hangul (Korean)
+    "]"
+)
+#A prompt this much non-Latin-script, by character, is treated as written in that script, not English.
+#Low, since any amount of unreadable script text means the English-only local checks can't trust the prompt
+MIN_NON_LATIN_SHARE = 0.2
 
 @dataclass(frozen=True)
 class Action:
@@ -84,8 +104,19 @@ class Intent:
     def isMultiIntent(self) -> bool:
         return len(self.actions) > 1
 
-#True unless the prompt has more non-English function words than English stop words
+"""
+* @brief Tells whether a prompt looks like English.
+* @post
+* 1. False if MIN_NON_LATIN_SHARE or more of its letters are outside the Latin alphabet (Cyrillic, Hebrew,
+*    Arabic, Devanagari, Japanese, Chinese, Korean, ...). Checked first and separately, since none of
+*    those languages' words can appear in FOREIGN_WORDS (a Latin-script list) to be caught below.
+* 2. Otherwise, True unless the prompt has more non-English function words (FOREIGN_WORDS: Spanish,
+*    French, German, Italian, Portuguese) than English stop words.
+"""
 def looksEnglish(doc) -> bool:
+    letters = [char for char in doc.text if char.isalpha()]
+    if letters and sum(1 for char in letters if NON_LATIN_SCRIPT_RE.match(char)) / len(letters) >= MIN_NON_LATIN_SHARE:
+        return False
     words = [token.lower_ for token in doc if token.is_alpha]
     foreign = sum(word in FOREIGN_WORDS for word in words)
     return foreign == 0 or sum(token.is_stop for token in doc if token.is_alpha) > foreign
