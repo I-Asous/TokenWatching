@@ -1,5 +1,18 @@
 # config/pricing.yaml
 models:
+  claude-opus-5-5:
+    input: 4.00
+    output: 20.00
+    context_window: 1000000
+  claude-sonnet-5-5:
+    input: 2.00
+    output: 10.00
+    context_window: 1000000
+  #Up to 100K input tokens; $0.50 / $2.50 beyond
+  claude-haiku-5-5:
+    input: 0.10
+    output: 0.50
+    context_window: 1000000
   claude-opus-4-8:
     input: 5.00
     output: 25.00
@@ -24,8 +37,15 @@ modifiers:
   #cached input tokens = 90% cheaper
   cache_read_discount: 0.90
 
+  #writing to the 5-minute cache costs 1.25x the input price (the 1-hour cache costs 2x)
+  cache_write_multiplier: 1.25
+
   #placeholder: some models add a premium beyond 200K input ned to verify per-model before enabling
   long_context_surcharge: 1.0
 
+#What one saved prompt token is worth: the input price of this model, standing in for the model the person
+#is prompting. The eval's net savings use it (scripts/eval_baseline.py --saved-price-model overrides it)
+saved_token_model: claude-sonnet-5-5
+
 rate_unit: per_million_tokens
-last_verified: "2026-09-14"
+last_verified: "2026-11-03"

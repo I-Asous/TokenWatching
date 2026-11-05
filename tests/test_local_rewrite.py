@@ -2,7 +2,7 @@
 Offline unit tests for the local (no LLM) rewrite and the filler-only edit check
 """
 import pytest
-from agents.local_rewrite import deleteFiller, localRewrite, isFillerOnlyEdit
+from agents.local_rewrite import deleteFiller, localEdits, localRewrite, isFillerOnlyEdit, tidyWhitespace
 
 #Politeness, filler and the thanks are deleted, and the leftover question becomes a direct instruction
 def test_deleteFiller_removes_politeness_and_fixes_punctuation():
@@ -196,3 +196,50 @@ def test_isFillerOnlyEdit_rejects_other_edits(rewrite):
 #These look like deletions, but each changes the request, so the Validator has to see them
 def test_isFillerOnlyEdit_rejects_deletions_that_change_the_request(original, rewrite):
     assert not isFillerOnlyEdit(original, rewrite)
+
+#A sentence repeated word for word is deleted locally, keeping the first copy
+def test_localRewrite_removes_word_for_word_repeats():
+    result = localRewrite("Write a summary of the report for the team. Keep it under 200 words. Keep it under 200 words.")
+    assert result is not None
+    assert result.optimizedPrompt == "Write a summary of the report for the team. Keep it under 200 words."
+    assert result.changes == ["removed repeated sentences: 'Keep it under 200 words.'"]
+
+#Wordy phrases get their shorter form, keeping a capital at the start of a sentence
+def test_localRewrite_shortens_wordy_phrases():
+    result = localRewrite("Due to the fact that the API is able to time out, add retries prior to the release. "
+                          "In the event that it fails, log it.")
+    assert result is not None
+    assert result.optimizedPrompt == "Because the API can time out, add retries before the release. If it fails, log it."
+
+@pytest.mark.parametrize("prompt", [
+    "Translate 'in order to' into French. Translate 'in order to' into French.",       #quoted material
+    "Summarize this: due to the fact that sales fell in order to cut costs we closed two stores.",  #pasted material
+    "Frontend:\n- Run the unit tests.\nBackend:\n- Run the unit tests.",                #same item under two headings
+    "Make it short. Keep it brief and concise.",                                        #near-repeat, not word for word
+    "Fix this:\n```python\nx = 1  # in order to test\n```\nFix this:\n```python\nx = 1  # in order to test\n```",
+])
+#The person's material, list items and near-repeats are left for the Optimizer
+def test_localEdits_leave_material_and_near_repeats_alone(prompt):
+    assert localEdits(prompt)[0] == prompt.strip()
+
+#Blank lines inside a code block are kept; outside, two or more become one, and "!!!" becomes "!"
+def test_tidyWhitespace_skips_code():
+    text, changed = tidyWhitespace("Explain this.\n\n\n\nIt fails!!!\n```python\nx = 1\n\n\n\ny = 2\n```")
+    assert changed
+    assert text == "Explain this.\n\nIt fails!\n```python\nx = 1\n\n\n\ny = 2\n```"
+
+@pytest.mark.parametrize("rewrite", [
+    "Because the API can time out, add retries before the release. Log every failure.",
+    "Due to the fact that the API is able to time out, add retries before the release. Log every failure.",
+    "Because the API can time out, add retries before the release. Log every failure. Log every failure.",
+])
+#Shortening wordy phrases and deleting a word-for-word repeat, in any combination, skips the Validator
+def test_isFillerOnlyEdit_accepts_phrases_and_repeats(rewrite):
+    original = ("Due to the fact that the API is able to time out, add retries prior to the release. "
+                "Log every failure. Log every failure.")
+    assert isFillerOnlyEdit(original, rewrite)
+
+#Swapping in a shorter word that isn't in the phrase table is rewording, so the Validator sees it
+def test_isFillerOnlyEdit_rejects_rewording_beyond_the_table():
+    original = "Due to the fact that the API is able to time out, add retries prior to the release."
+    assert not isFillerOnlyEdit(original, "Since the API can time out, add retries before the release.")

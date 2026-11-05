@@ -1,0 +1,79 @@
+{
+  "runs": 40,
+  "outcomes": {
+    "optimized": 14,
+    "fillerOnly": 4,
+    "unchanged": 21,
+    "ask": 1,
+    "error": 0,
+    "crash": 0
+  },
+  "expectMatchRate": 0.925,
+  "expectMatchByCategory": {
+    "code": 1.0,
+    "concise": 1.0,
+    "constraint": 0.75,
+    "duplicates": 1.0,
+    "filler": 1.0,
+    "injection": 1.0,
+    "long": 1.0,
+    "multi": 0.667,
+    "non-english": 1.0,
+    "optional": 1.0,
+    "security": 0.5,
+    "steps": 1.0,
+    "url": 1.0,
+    "vague": 1.0
+  },
+  "expectMisses": [
+    "constraint-negation",
+    "multi-translate",
+    "security-sql"
+  ],
+  "optimizedRate": 0.45,
+  "totalOriginalTokens": 1349,
+  "totalTokensSaved": 320,
+  "meanPercentSavedAll": 15.68,
+  "meanPercentSavedOptimized": 34.83,
+  "mustKeepViolations": [],
+  "rewriteProblemCases": [],
+  "validatorCalls": 14,
+  "attemptPassRate": 1.0,
+  "firstAttemptPassRate": 1.0,
+  "optimizerRuns": 16,
+  "optimizerTurnsMean": 1.56,
+  "optimizerTurnsMax": 4,
+  "optimizerTurnsDistribution": {
+    "1": 11,
+    "2": 2,
+    "3": 2,
+    "4": 1
+  },
+  "llmCallsMean": 0.97,
+  "llmCallsTotal": 39,
+  "latencyMsP50": 44,
+  "latencyMsP95": 8847,
+  "latencyMsP50WithLLM": 4772,
+  "latencyMsP95WithLLM": 17695,
+  "latencyMsMax": 17695,
+  "apiErrors": 0,
+  "crashes": [],
+  "tokensPerModel": {
+    "claude-haiku-5-5": {
+      "input_tokens": 13325,
+      "output_tokens": 13825,
+      "cache_read_input_tokens": 109352,
+      "cache_creation_input_tokens": 17082
+    }
+  },
+  "pipelineCostUsd": 0.011474,
+  "pipelineCostPerRunUsd": 0.000287,
+  "pipelineCostPerLLMRunUsd": 0.000717,
+  "pipelineCostPerModelUsd": {
+    "claude-haiku-5-5": 0.011474
+  },
+  "unpricedModels": [],
+  "savedValueUsd": 0.00064,
+  "netSavingsUsd": -0.010834,
+  "breakEvenSends": 17.9
+}

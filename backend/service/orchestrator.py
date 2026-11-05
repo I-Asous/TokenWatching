@@ -39,6 +39,8 @@ class RunOrchestrator(OrchestrationHooks):
     target: str
     context: list[ContextCreate] = field(default_factory=list)
     answers: list[Answer] = field(default_factory=list)
+    # false runs only the free local cleanup; true runs the Optimizer and Validator too
+    llm: bool = False
     db: Client = field(default_factory=get_supabase, init=False)
     run_id: int | None = field(default=None, init=False)
     status: str = field(default="pending", init=False)
@@ -85,7 +87,7 @@ class RunOrchestrator(OrchestrationHooks):
         self.run_id = savedRun[0]["run_id"]
 
         try:
-            return runPipeline(self.prompt, self.target, hook=self, answers=self.answers)
+            return runPipeline(self.prompt, self.target, hook=self, answers=self.answers, llm=self.llm)
         except Exception as e:
             update_orchestration(self.db, self.run_id, OrchestrationUpdate(
                 status="failed",

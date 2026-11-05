@@ -1,7 +1,8 @@
 import re
 from dataclasses import dataclass
 from spacy.lang.en.stop_words import STOP_WORDS
-from agents.auditor import MAX_SPANS_SHOWN, maskProtected, findRemovableFiller, runRuleCheck
+from agents.auditor import (MAX_SPANS_SHOWN, CODE_BLOCK_RE, maskProtected, findRemovableFiller, findWordyPhraseMatches,
+                            shortFormOf, runRuleCheck)
 from agents.optimizer import OptimizationResult, findRewriteProblems
 from agents.tokens import countTokens, DEFAULT_TARGET
 from agents.vagueness import PASTED_AFTER_COLON_RE
@@ -45,6 +46,13 @@ WORD_RE = re.compile(r"[\w'-]+")
 QUESTION_STARTS = frozenset({"what", "which", "who", "whom", "whose", "when", "where", "why", "how", "is", "are",
                              "am", "was", "were", "do", "does", "did", "can", "could", "would", "will", "should",
                              "shall", "may", "might", "have", "has", "had", "must"})
+#Two or more blank lines (whitespace-only lines count), and "!!" or "??": they take tokens and say nothing more
+EXTRA_BLANK_LINES_RE = re.compile(r"\n[ \t]*(?:\n[ \t]*){2,}")
+REPEATED_MARKS_RE = re.compile(r"([!?])\1+")
+#A list item ("- Run tests", "2) Deploy"): the same item under two headings is two tasks, not a repeat
+LIST_ITEM_RE = re.compile(r"(?:[-*•]|\d+[.)])\s")
+#A repeated sentence shorter than this ("Thanks!", "Yes.") is left alone
+MIN_REPEAT_WORDS = 3
 
 @dataclass(frozen=True)
 class Deletion:
@@ -172,22 +180,125 @@ def deleteFiller(text: str) -> tuple[str, list[str]]:
     return "".join(parts).strip(), deleted
 
 """
-* @brief Rewrites a prompt without an LLM, when deleting its politeness and filler is all it needs.
+* @brief Collapses extra blank lines and repeated "!!" or "??" outside code and quoted text.
 * @post
-* 1. Only runs when the Auditor's filler check flagged the prompt (findRemovableFiller), so the audit's
-*    issues came from the rule checks, not the LLM review, and there is enough to cut to be worth it.
-* 2. The spans are deleted (deleteFiller) and the rewrite must pass findRewriteProblems, save tokens with
-*    the target's tokenizer, and, if requireClean, leave nothing for the rule checks to flag (minus skipChecks).
-*    Otherwise None is returned and the Optimizer handles the prompt.
+* 1. Two or more blank lines become one, except inside a code block, where blank lines may matter.
+* 2. A run of "!" or "?" becomes one, except in code blocks, quoted text and optional sentences (maskProtected).
+* 3. Returns the text and whether anything changed.
+"""
+def tidyWhitespace(text: str) -> tuple[str, bool]:
+    codeBlocks = [match.span() for match in CODE_BLOCK_RE.finditer(text)]
+    edits = [(match.start(), match.end(), "\n\n") for match in EXTRA_BLANK_LINES_RE.finditer(text)
+             if not any(start <= match.start() < end for start, end in codeBlocks)]
+    edits += [(match.start(), match.end(), match.group(1)) for match in REPEATED_MARKS_RE.finditer(maskProtected(text))]
+    for start, end, replacement in sorted(edits, reverse=True):
+        text = text[:start] + replacement + text[end:]
+    return text, bool(edits)
+
+"""
+* @brief Finds sentences that repeat an earlier sentence word for word.
+* @post
+* 1. Two sentences are the same when they have the same words in the same order, ignoring capitals,
+*    punctuation and spacing. A near-repeat ("Keep it short." after "Make it brief.") is left for the Optimizer:
+*    only an exact repeat is sure to add nothing.
+* 2. Only finished prose sentences are compared: a sentence must end in . ! or ?, have at least MIN_REPEAT_WORDS
+*    words, not be a list item, and hold no code, quoted text or optional request (maskProtected).
+*    Everything from pasted material after a colon on is skipped.
+* 3. Returns the range of every later copy, including the whitespace before it, as offsets into text.
+"""
+def findRepeatedSentences(text: str) -> list[tuple[int, int]]:
+    text = text.replace("’", "'")
+    masked = maskProtected(text)
+    pasted = PASTED_AFTER_COLON_RE.search(masked)
+    materialStart = pasted.start() if pasted else len(masked)
+    seen: set[tuple[str, ...]] = set()
+    repeats = []
+    for start, end in sentenceRanges(masked):
+        if end > materialStart:
+            break
+        sentence = masked[start:end].strip()
+        if masked[start:end] != text[start:end] or not sentence.endswith((".", "!", "?")) or LIST_ITEM_RE.match(sentence):
+            continue
+        words = tuple(word.lower() for word in WORD_RE.findall(sentence))
+        if len(words) < MIN_REPEAT_WORDS:
+            continue
+        if words in seen:
+            repeats.append((start, end))
+        else:
+            seen.add(words)
+    return repeats
+
+#Deletes every word-for-word repeat of an earlier sentence, and returns the text and the sentences deleted
+def deleteRepeatedSentences(text: str) -> tuple[str, list[str]]:
+    repeats = findRepeatedSentences(text)
+    deleted = [text[start:end].strip() for start, end in repeats]
+    for start, end in reversed(repeats):
+        text = text[:start] + text[end:]
+    return text, deleted
+
+"""
+* @brief Replaces each wordy phrase (auditor.WORDY_PHRASES) with its shorter form.
+* @post
+* 1. Code, quoted text, optional sentences and pasted material are left alone (findWordyPhraseMatches).
+* 2. A phrase starting with a capital gets a capitalized replacement ("In order to" -> "To").
+* 3. Returns the text and each replacement made, once, as "'phrase' -> 'short'".
+"""
+def replaceWordyPhrases(text: str) -> tuple[str, list[str]]:
+    replaced = []
+    for match in reversed(findWordyPhraseMatches(text)):
+        short = shortFormOf(match.group(0))
+        if match.group(0)[0].isupper():
+            short = short[0].upper() + short[1:]
+        text = text[:match.start()] + short + text[match.end():]
+        replaced.append(f"'{match.group(0)}' -> '{short}'")
+    return text, list(dict.fromkeys(reversed(replaced)))
+
+def quoteSpans(spans: list[str]) -> str:
+    return ", ".join(f"'{span}'" for span in list(dict.fromkeys(spans))[:MAX_SPANS_SHOWN])
+
+"""
+* @brief Makes every edit that can't change what a prompt asks for, in order, and lists them.
+* @post
+* 1. Extra blank lines and repeated "!!" go (tidyWhitespace), then word-for-word repeated sentences
+*    (deleteRepeatedSentences), then wordy phrases are shortened (replaceWordyPhrases).
+* 2. Politeness and filler are deleted last (deleteFiller), and only when the Auditor's filler check flags the
+*    prompt (findRemovableFiller), so a lone "Please" isn't cut. If deleting it would leave a fragment, the
+*    other edits are kept without it.
+* 3. Returns the stripped text and one line per kind of edit made.
+"""
+def localEdits(prompt: str) -> tuple[str, list[str]]:
+    changes = []
+    text, tidied = tidyWhitespace(prompt)
+    if tidied:
+        changes.append("removed extra blank lines and repeated punctuation")
+    text, repeated = deleteRepeatedSentences(text)
+    if repeated:
+        changes.append(f"removed repeated sentences: {quoteSpans(repeated)}")
+    text, shortened = replaceWordyPhrases(text)
+    if shortened:
+        changes.append(f"shortened wordy phrases: {', '.join(shortened[:MAX_SPANS_SHOWN])}")
+    if findRemovableFiller(prompt) is not None:
+        withoutFiller, deleted = deleteFiller(text)
+        if withoutFiller and deleted:
+            text = withoutFiller
+            changes.append(f"removed politeness and filler: {quoteSpans(deleted)}")
+    return text.strip(), changes
+
+"""
+* @brief Rewrites a prompt without an LLM, when edits that can't change the request are all it needs.
+* @post
+* 1. The edits are made by localEdits: blank lines and repeated punctuation, word-for-word repeated sentences,
+*    wordy phrases, and politeness and filler when the Auditor's filler check flags the prompt.
+* 2. The rewrite must pass findRewriteProblems, save tokens with the target's tokenizer, and, if requireClean,
+*    leave nothing for the rule checks to flag (minus skipChecks). Otherwise None is returned and the
+*    Optimizer handles the prompt.
 * 3. Without requireClean the rewrite may leave other issues (long sentences, dense wording). It's still
 *    safe, so the orchestrator offers it to the Optimizer and falls back to it when no LLM rewrite passes.
-* 4. Returns an OptimizationResult like the Optimizer's, listing the deleted spans as its change.
+* 4. Returns an OptimizationResult like the Optimizer's, with one change line per kind of edit.
 """
 def localRewrite(prompt: str, target: str = DEFAULT_TARGET, skipChecks: frozenset[str] = frozenset(),
                  requireClean: bool = True) -> OptimizationResult | None:
-    if findRemovableFiller(prompt) is None:
-        return None
-    rewrite, deleted = deleteFiller(prompt)
+    rewrite, changes = localEdits(prompt)
     if not rewrite or rewrite == prompt.strip() or findRewriteProblems(prompt, rewrite):
         return None
 
@@ -197,7 +308,6 @@ def localRewrite(prompt: str, target: str = DEFAULT_TARGET, skipChecks: frozense
         return None
 
     tokensSaved = originalTokens - optimizedTokens
-    shown = ", ".join(f"'{span}'" for span in list(dict.fromkeys(deleted))[:MAX_SPANS_SHOWN])
     return OptimizationResult(
         originalPrompt=prompt,
         optimizedPrompt=rewrite,
@@ -205,25 +315,28 @@ def localRewrite(prompt: str, target: str = DEFAULT_TARGET, skipChecks: frozense
         optimizedTokens=optimizedTokens,
         tokensSaved=tokensSaved,
         percentSaved=round(tokensSaved / originalTokens * 100, 2),
-        changes=[f"removed politeness and filler: {shown}"],
+        changes=changes,
     )
 
 """
-* @brief Tells whether a rewrite only deleted politeness and filler from the original, so it can't have
-* changed what the prompt asks for and needs no Validator call.
+* @brief Tells whether a rewrite only made edits the local rewrite could have made (deleted politeness and
+* filler or a word-for-word repeated sentence, shortened a wordy phrase), so it can't have changed what the
+* prompt asks for and needs no Validator call.
 * @post
-* 1. Both texts are compared as lowercase words, so capitals, punctuation and spacing don't count.
-* 2. The rewrite's words must appear in the original in the same order, and every original word it
-*    left out must be inside a span findDeletions would delete. No word may be added or reworded, and a word
-*    cut from inside a sentence ("really", "thank you") goes to the Validator.
-* 3. Words are matched greedily, so an unusual repeat can be reported False; that only costs a Validator call.
-* 4. Code, URLs and numbers are compared exactly by findRewriteProblems, which must run before this.
+* 1. Wordy phrases are shortened in both texts first (replaceWordyPhrases), so "to" in the rewrite matches
+*    "in order to" in the original, whichever of the two forms each one uses.
+* 2. Both texts are then compared as lowercase words, so capitals, punctuation and spacing don't count.
+* 3. The rewrite's words must appear in the original in the same order, and every original word it left out
+*    must be inside a span findDeletions would delete or a repeated sentence (findRepeatedSentences). No word
+*    may be added or reworded, and a word cut from inside a sentence ("really", "thank you") goes to the Validator.
+* 4. Words are matched greedily, so an unusual repeat can be reported False; that only costs a Validator call.
+* 5. Code, URLs and numbers are compared exactly by findRewriteProblems, which must run before this.
 """
 def isFillerOnlyEdit(original: str, rewrite: str) -> bool:
-    original = original.replace("’", "'")
-    rewrite = rewrite.replace("’", "'")
-    deletions = findDeletions(original)
-    originalWords = [(match.group(0).lower(), any(d.start <= match.start() and match.end() <= d.end for d in deletions))
+    original = replaceWordyPhrases(original.replace("’", "'"))[0]
+    rewrite = replaceWordyPhrases(rewrite.replace("’", "'"))[0]
+    removable = [(deletion.start, deletion.end) for deletion in findDeletions(original)] + findRepeatedSentences(original)
+    originalWords = [(match.group(0).lower(), any(start <= match.start() and match.end() <= end for start, end in removable))
                      for match in WORD_RE.finditer(original)]
     index = 0
     for word in (match.group(0).lower() for match in WORD_RE.finditer(rewrite)):

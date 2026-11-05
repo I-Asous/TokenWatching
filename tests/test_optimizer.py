@@ -134,10 +134,16 @@ def test_callOptimizerLLM_sends_system_prompt_and_strips(fakeClient):
     assert messages.lastRequest["tools"] is optimizer.OPTIMIZER_TOOLS
     assert messages.lastRequest["cache_control"] == {"type": "ephemeral"}
     assert messages.lastRequest["output_config"] == {"effort": optimizer.OPTIMIZER_EFFORT}
+    assert messages.lastRequest["thinking"] == optimizer.OPTIMIZER_THINKING
     assert messages.lastRequest["model"] == optimizer.OPTIMIZER_MODEL
     userContent = messages.lastRequest["messages"][0]["content"]
     assert "- Filler words" in userContent
     assert "Please write a poem." in userContent
+
+#Haiku 5.5 returns a 400 for disabled thinking above effort "high"
+def test_disabled_thinking_uses_an_accepted_effort():
+    if optimizer.OPTIMIZER_THINKING["type"] == "disabled":
+        assert optimizer.OPTIMIZER_EFFORT in ("low", "medium", "high")
 
 #A shorter rewrite produces correct token savings and percent
 def test_optimizePrompt_computes_savings(fakeClient):
@@ -473,3 +479,123 @@ def test_buildUserMessage_with_type_rules():
 #Without type rules, no section is added
 def test_buildUserMessage_without_type_rules():
     assert "Rules for this kind" not in optimizer.buildUserMessage("Write a poem.", [])
+
+
+#Records each rewrite it's asked to validate and plays back scripted verdicts, like the orchestrator's
+#SubmissionValidator without the Validator call
+class FakeValidate:
+    def __init__(self, *verdicts):
+        self.verdicts = list(verdicts)
+        self.rewrites = []
+
+    def __call__(self, rewrite):
+        self.rewrites.append(rewrite.optimizedPrompt)
+        passed = self.verdicts[min(len(self.rewrites), len(self.verdicts)) - 1]
+        return optimizer.ValidationResult("original", rewrite.optimizedPrompt, 8 if passed else 3, passed,
+                                          "Fine." if passed else "Dropped the dragon.")
+
+POLITE = "Hi there! Please write me a short story about a brave dragon. Thank you so much, I really appreciate it!"
+STORY = "Write a short story about a brave dragon."
+
+#A submission that saves too little is refused with the measured saving, and an unchanged one then ends the run
+def test_submission_saving_too_little_is_refused(fakeClient):
+    messages = fakeClient([submitTurn(makeRewrite(POLITE.replace("Hi there! ", ""))),
+                           submitTurn(makeRewrite(POLITE, unchanged=True, changes=[]), "toolu_2")])
+    result = optimizer.optimizePrompt(POLITE, minTokensSaved=10, minPercentSaved=2.0)
+    assert "must cut at least 10 of them" in messages.requests[0]["messages"][0]["content"]
+    [refusal] = toolResults(messages, 1)
+    assert refusal["is_error"] is True
+    assert "saves 3 tokens" in refusal["content"] and "at least 10 tokens" in refusal["content"]
+    assert result.optimizedPrompt == POLITE
+
+#With a minimum saving, the message gives the prompt's size and the fewest tokens to cut, before the prompt
+def test_buildUserMessage_with_saving_minimum():
+    context = optimizer.ToolContext(minTokensSaved=5, minPercentSaved=2.0)
+    message = optimizer.buildUserMessage(POLITE, [], context=context)
+    assert f"This prompt is {optimizer.countTokens(POLITE)} tokens" in message
+    assert "must cut at least 5 of them" in message
+    assert message.index("must cut") < message.index("PROMPT TO OPTIMIZE")
+
+#No minimum, or a zero one (a prompt with answers), adds no saving line
+@pytest.mark.parametrize("minimum", [None, 0])
+def test_buildUserMessage_without_saving_minimum(minimum):
+    context = optimizer.ToolContext(minTokensSaved=minimum)
+    assert "must cut" not in optimizer.buildUserMessage(POLITE, [], context=context)
+
+#The number the message asks for is the saving check's own bar: the larger of the token and percent minimums.
+#A rewrite cutting exactly that many passes, one token less is refused
+def test_tokensToSave_matches_the_saving_check(monkeypatch):
+    counts = {"short": 30, "long": 400, "cut 8": 392, "cut 7": 393}
+    monkeypatch.setattr(optimizer, "countTokens", lambda text, target: counts[text])
+    monkeypatch.setattr(optimizer, "findRewriteProblems", lambda original, rewrite: [])
+    context = optimizer.ToolContext(minTokensSaved=5, minPercentSaved=2.0)
+    assert optimizer.tokensToSave("short", context) == 5
+    assert optimizer.tokensToSave("long", context) == 8
+    assert optimizer.findSubmissionProblems(makeRewrite("cut 8"), "long", context) is None
+    assert optimizer.findSubmissionProblems(makeRewrite("cut 7"), "long", context).startswith("Refused")
+
+#With a zero minimum (a prompt with answers), only a rewrite longer than the prompt is refused
+def test_submission_longer_than_prompt_is_refused():
+    context = optimizer.ToolContext(minTokensSaved=0)
+    longer = makeRewrite(STORY + " Make it good.").model_dump()
+    assert optimizer.runTool(optimizer.SUBMIT_TOOL, longer, STORY + " ", context)[1] is True
+    shorter = makeRewrite("Write a story about a brave dragon.").model_dump()
+    assert optimizer.runTool(optimizer.SUBMIT_TOOL, shorter, STORY, context)[1] is False
+
+#A failed validation is refused with the reviewer's reasoning, and the fixed rewrite is accepted
+def test_failed_validation_is_refused_then_fixed(fakeClient):
+    validate = FakeValidate(False, True)
+    messages = fakeClient([submitTurn(makeRewrite("Write a short story about a dragon.")),
+                           submitTurn(makeRewrite(STORY), "toolu_2")])
+    result = optimizer.optimizePrompt(POLITE, minTokensSaved=5, validate=validate)
+    [refusal] = toolResults(messages, 1)
+    assert refusal["is_error"] is True
+    assert "Dropped the dragon." in refusal["content"] and "1 review left" in refusal["content"]
+    assert validate.rewrites == ["Write a short story about a dragon.", STORY]
+    assert result.optimizedPrompt == STORY
+
+#Validation only runs once the local checks pass, so a broken rewrite never costs a Validator call
+def test_local_problems_are_refused_before_validating(fakeClient):
+    validate = FakeValidate(True)
+    original = "Could you please write a bio for our CEO in under 300 words? Thanks!"
+    fakeClient([submitTurn(makeRewrite("Write a bio for our CEO.")),
+                submitTurn(makeRewrite("Write a bio for our CEO in under 300 words."), "toolu_2")])
+    optimizer.optimizePrompt(original, validate=validate)
+    assert validate.rewrites == ["Write a bio for our CEO in under 300 words."]
+
+#Once every validation has failed, the run stops without spending the remaining turns
+def test_loop_stops_when_validations_run_out(fakeClient):
+    validate = FakeValidate(False)
+    messages = fakeClient(makeRewrite(STORY))
+    result = optimizer.optimizePrompt(POLITE, validate=validate)
+    assert len(validate.rewrites) == optimizer.MAX_VALIDATIONS
+    assert len(messages.requests) == optimizer.MAX_VALIDATIONS
+    assert result.optimizedPrompt == POLITE and result.tokensSaved == 0
+
+#After an accepted submission, a second one in the same turn isn't run, so it can't spend a validation
+def test_parallel_submission_after_accepted_one_is_skipped(fakeClient):
+    validate = FakeValidate(True)
+    fakeClient([[toolUse(optimizer.SUBMIT_TOOL, makeRewrite(STORY).model_dump(), "toolu_1"),
+                 toolUse(optimizer.SUBMIT_TOOL, makeRewrite("Write a dragon story.").model_dump(), "toolu_2")]])
+    result = optimizer.optimizePrompt(POLITE, validate=validate)
+    assert validate.rewrites == [STORY]
+    assert result.optimizedPrompt == STORY
+
+#A copy of the prompt counts as unchanged even when not marked, so it's never validated
+def test_copy_of_prompt_is_unchanged():
+    validate = FakeValidate(True)
+    context = optimizer.ToolContext(minTokensSaved=0, validate=validate)
+    content, isError, submitted = optimizer.runTool(optimizer.SUBMIT_TOOL, makeRewrite(STORY).model_dump(),
+                                                    STORY, context)
+    assert (content, isError) == ("Submitted.", False)
+    assert submitted.unchanged is True and validate.rewrites == []
+
+#rewriteResult keeps the prompt for a missing or unchanged rewrite and never reports a negative saving
+def test_rewriteResult():
+    assert optimizer.rewriteResult(STORY, None).optimizedPrompt == STORY
+    kept = optimizer.rewriteResult(STORY, makeRewrite("Something else", unchanged=True))
+    assert kept.optimizedPrompt == STORY and kept.tokensSaved == 0
+    longer = optimizer.rewriteResult(STORY, makeRewrite(STORY + " Make it long and detailed."))
+    assert longer.tokensSaved == 0 and longer.percentSaved == 0.0
+    shorter = optimizer.rewriteResult(POLITE, makeRewrite(STORY))
+    assert shorter.tokensSaved > 0 and shorter.changes == ["removed politeness phrasing"]

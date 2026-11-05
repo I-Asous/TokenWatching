@@ -4,6 +4,7 @@ python-dotenv
 tiktoken
 spacy
 textstat
+pyyaml
 fastapi[standard]==0.142.2
 supabase==2.31.0
 email-validator

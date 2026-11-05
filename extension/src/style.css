@@ -616,6 +616,24 @@ input:not(:placeholder-shown) + .lableLine {
   overflow-wrap: anywhere;
 }
 
+.optimize-further-button {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 10px;
+  color: #FFFFFF;
+  background: #000000;
+  border: 1px solid #000000;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.optimize-further-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .progress{
   display: flex;
   align-items: center;
