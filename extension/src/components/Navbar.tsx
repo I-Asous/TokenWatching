@@ -1,4 +1,4 @@
-export type Tab = 'stats' | 'prompt' | 'history';
+export type Tab = 'stats' | 'prompt' | 'history' | 'settings';
 
 type NavbarProps = {
   active: Tab;
@@ -7,8 +7,9 @@ type NavbarProps = {
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'stats', label: 'Stats' },
-  { id: 'prompt', label: 'Enter Prompt' },
+  { id: 'prompt', label: 'Optimize' },
   { id: 'history', label: 'History' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 function Navbar({ active, onChange }: NavbarProps) {

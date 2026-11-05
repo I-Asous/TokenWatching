@@ -18,7 +18,7 @@ router = APIRouter()
 router.include_router(prompts_router, prefix="/prompts", tags=["prompts"])
 router.include_router(optimized_prompts_router, prefix="/optimized-prompts", tags=["optimized-prompts"])
 router.include_router(prompt_w_optimized_router, prefix="/prompt-w-optimized", tags=["prompt-w-optimized"])
-# The orchestrator itself is not protected by table-level RLS.
+# The orchestrator uses the caller's authenticated Supabase client for table access.
 router.include_router(ochestrator_router, prefix="/orchestrator", tags=["orchestrator"], dependencies=[Depends(current_user)])
 router.include_router(audit_router, prefix="/audits", tags=["audits"])
 router.include_router(context_router, prefix="/contexts", tags=["contexts"])

@@ -40,3 +40,5 @@ class OrchestrationRequest(BaseModel):
     # send the same prompt again with every answer so far to have them worked into the rewrite
     answers: list[ClarifyingAnswer] = Field(default_factory=list, max_length=10)
     context: list[ContextCreate] = []
+    validator_pass_score: int | None = Field(default=None, ge=1, le=10)
+    max_optimization_attempts: int = Field(default=2, ge=1, le=5)

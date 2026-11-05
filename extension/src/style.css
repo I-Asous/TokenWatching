@@ -7,6 +7,7 @@ body {
   padding-top: 108px;
   padding-bottom: 0;
   border-radius: 10px;
+  overflow-y: auto;
 }
 
 .Logo {
@@ -106,15 +107,6 @@ border-radius: 10px;
   gap: 6px;
   font-size: 14px;
   font-family: 'Inter';
-}
-
-.stats-filter select {
-  font-family: 'Inter';
-  padding: 6px 8px;
-  color: #000000;
-  background: #FFFFFF;
-  border: 1px solid #000000;
-  border-radius: 6px;
 }
 
 .stats-filter input {
@@ -295,8 +287,6 @@ input:not(:placeholder-shown) + .lableLine {
   cursor: pointer;
   color: rgb(0, 0, 0);
   transition: background 0.15s ease;
-    border-radius: 10px;
-  
 }
 .nav-item {
   flex: 1;
@@ -346,6 +336,34 @@ input:not(:placeholder-shown) + .lableLine {
   margin: 18px 0 10px;
 }
 
+.stats-range-tabs {
+  display: flex;
+  gap: 3px;
+  margin: 0 8px 10px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #F0F0F0;
+}
+
+.stats-range-tab {
+  flex: 1;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #555555;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.stats-range-tab.active {
+  background: #FFFFFF;
+  color: #171717;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
 .activity-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -362,6 +380,70 @@ input:not(:placeholder-shown) + .lableLine {
   border-radius: 12px;
   background: #FFFFFF;
   text-align: left;
+}
+
+.activity-card-overall {
+  grid-column: 1 / -1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.activity-card-overall h5,
+.activity-card-overall .activity-caption {
+  grid-column: 1;
+}
+
+.activity-card-overall h5 {
+  margin: 0;
+}
+
+.activity-card-overall .activity-total {
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+
+.activity-card-overall .activity-caption {
+  margin-top: 3px;
+}
+
+.activity-card-overall .activity-total,
+.activity-card-overall .activity-caption,
+.activity-grid .activity-card-saved h5,
+.activity-card-saved .activity-total,
+.activity-card-saved .activity-caption,
+.stats-outcome-grid .stats-outcome-card-saved h5,
+.stats-outcome-card-saved strong {
+  color: #2E7D32;
+}
+
+.stats-outcome-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 8px 4px;
+}
+
+.stats-outcome-card {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #E5E5E5;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.stats-outcome-card h5 {
+  margin: 0 0 6px;
+  color: #555555;
+  font-size: 10px;
+}
+
+.stats-outcome-card strong {
+  color: #171717;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .activity-card h5 {
@@ -442,6 +524,7 @@ input:not(:placeholder-shown) + .lableLine {
   background: #FFFFFF;
   color: #171717;
   font-size: 13px;
+  font-weight: 700;
   text-align: left;
 }
 
@@ -454,9 +537,9 @@ input:not(:placeholder-shown) + .lableLine {
 
 .history-day-heading {
   margin: 2px 0 0;
-  color: #555555;
+  color: #333333;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-align: left;
 }
 
@@ -514,6 +597,22 @@ input:not(:placeholder-shown) + .lableLine {
   -webkit-line-clamp: 2;
 }
 
+.history-optimized-preview {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: #E0F2FE;
+  color: #0C4A6E;
+  font-weight: 600;
+}
+
+.history-unoptimized-preview {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: #E5E7EB;
+  color: #4B5563;
+  font-weight: 600;
+}
+
 .history-token-count {
   display: inline-block;
   margin: 0 0 6px;
@@ -529,8 +628,32 @@ input:not(:placeholder-shown) + .lableLine {
   font-size: 10px;
 }
 
-.history-item[open] .history-item-summary {
+.history-item-optimized[open] .history-item-summary {
   border-bottom: 1px solid #E5E5E5;
+  background: #E0F7FA;
+  border-radius: 12px 12px 0 0;
+}
+
+.history-item-optimized[open] {
+  border-color: #80DEEA;
+  background: #F0FDFF;
+  box-shadow: 0 0 0 2px rgb(128 222 234 / 18%);
+}
+
+.history-item-optimized[open] .history-optimized-preview {
+  background: #CFFAFE;
+}
+
+.history-item-original[open] {
+  border-color: #D1D5DB;
+  background: #F9FAFB;
+  box-shadow: none;
+}
+
+.history-item-original[open] .history-item-summary {
+  border-bottom: 1px solid #E5E7EB;
+  border-radius: 12px 12px 0 0;
+  background: #F3F4F6;
 }
 
 .history-item .history-message {
@@ -558,6 +681,98 @@ input:not(:placeholder-shown) + .lableLine {
   border: 1px solid #E5E5E5;
   background: #FAFAFA;
   color: #171717;
+}
+
+.history-expanded-content {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+}
+
+.history-full-optimized {
+  padding: 9px;
+  border: 1px solid #BAE6FD;
+  border-radius: 8px;
+  background: #F0F9FF;
+  font-size: 12px;
+}
+
+.history-full-optimized summary {
+  color: #075985;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.history-full-optimized p {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.history-original-prompt {
+  margin-top: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #F1F1F1;
+  color: #555;
+}
+
+.history-original-prompt p {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #555;
+  font-size: 12px;
+}
+
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.history-action-button {
+  padding: 7px 9px;
+  border: 1px solid #777;
+  border-radius: 7px;
+  background: #fff;
+  color: #111;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.history-action-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.history-rerun-button {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+.history-rerun-result {
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid #cbd8cd;
+  border-radius: 8px;
+  background: #f5faf6;
+}
+
+.history-rerun-result p {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.history-action-error {
+  color: #a32020;
+  font-size: 12px;
 }
 
 .history-message-label {
@@ -616,22 +831,115 @@ input:not(:placeholder-shown) + .lableLine {
   overflow-wrap: anywhere;
 }
 
-.progress{
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 5% 10px;
+.view-details-button,
+.details-back-button {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border: 1px solid #222;
+  border-radius: 7px;
+  background: #fff;
+  color: #111;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
 }
 
-.spinner{
-  width: 16px;
-  height: 16px;
-  border: 3px solid #000000;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
+.optimization-details {
+  width: 420px;
+  min-height: 420px;
+  padding: 14px;
+  box-sizing: border-box;
 }
 
-@keyframes spin{
-  to { transform: rotate(360deg); }
+.optimization-details h2 {
+  margin: 12px 0;
+}
+
+.details-section {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 9px;
+  text-align: left;
+}
+
+.details-section h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.details-section p {
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+.details-section ul {
+  margin: 6px 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.details-attempt {
+  margin: 8px 0;
+  padding: 9px;
+  background: #f6f6f6;
+  border-radius: 7px;
+}
+
+.details-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.details-section summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.settings-page {
+  padding: 8px 14px 18px;
+  text-align: left;
+}
+
+.settings-page h2 {
+  margin: 10px 0 16px;
+}
+
+.settings-section {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid #ddd;
+  border-radius: 9px;
+}
+
+.settings-section label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settings-section p {
+  margin: 0 0 10px;
+  color: #555;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-section select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #888;
+  border-radius: 7px;
+  background: #fff;
+  color: #111;
+  font: inherit;
+  font-size: 13px;
+}
+
+.settings-save-message {
+  min-height: 18px;
+  margin: 10px 14px;
+  color: #28733a;
+  font-size: 12px;
 }

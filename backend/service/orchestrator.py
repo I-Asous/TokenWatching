@@ -10,7 +10,6 @@ from agents.hooks.orchestrator import OrchestrationHooks
 from agents.orchestrator import OrchestrationResult, runPipeline
 from agents.optimizer import Answer
 from agents.validator import ValidationResult
-from repository.client import get_supabase
 from repository.context import create_contexts
 from repository.llm_call import create_llm_call
 from repository.orchestration import create_orchestration, update_orchestration, update_orchestration_status
@@ -20,7 +19,7 @@ from repository.optimized_prompts import create_optimized_prompt
 from repository.storage import context_file_exists
 from repository.validation import create_validation
 from schema.context import ContextCreate, ContextInsert
-from schema.llm_call import LlmCall
+from schema.llm_call import LlmCall, LlmCallCreate
 from schema.optimized_prompts import OptimizedPromptInsert
 from schema.orchestration import OrchestrationInsert, OrchestrationUpdate
 from schema.prompts import PromptInsert
@@ -37,9 +36,11 @@ class RunOrchestrator(OrchestrationHooks):
     user_id: str 
     prompt: str
     target: str
+    db: Client
     context: list[ContextCreate] = field(default_factory=list)
+    validator_pass_score: int | None = None
+    max_optimization_attempts: int = 2
     answers: list[Answer] = field(default_factory=list)
-    db: Client = field(default_factory=get_supabase, init=False)
     run_id: int | None = field(default=None, init=False)
     status: str = field(default="pending", init=False)
     last_optimized_prompt_id: int | None = field(default=None, init=False)
@@ -67,7 +68,7 @@ class RunOrchestrator(OrchestrationHooks):
                 raise Exception("this is not your file")
 
             # checking to make sure the file actually exists
-            if not context_file_exists(db=get_supabase(),path=curr):
+            if not context_file_exists(db=self.db, path=curr):
                 raise Exception("this file doesn't even exist!")
 
         promptFormatted : PromptInsert = PromptInsert(user_id=self.user_id, txt_prompt=self.prompt, target=self.target)
@@ -75,17 +76,21 @@ class RunOrchestrator(OrchestrationHooks):
         
         # inserting context in the db
         context_formatted = []
-        savedContext = None
         if self.context:
             for i in self.context:
                 context_formatted.append(ContextInsert(**i.model_dump(), user_id=self.user_id, prompt_id=savedPrompt[0]["prompt_id"]))
-            savedContext = create_contexts(self.db, context_formatted)
+            create_contexts(self.db, context_formatted)
 
         savedRun = create_orchestration(self.db, OrchestrationInsert(user_id=self.user_id, prompt_id=savedPrompt[0]["prompt_id"]))
         self.run_id = savedRun[0]["run_id"]
 
         try:
-            return runPipeline(self.prompt, self.target, hook=self, answers=self.answers)
+            return runPipeline(
+                self.prompt,
+                self.target,
+                hook=self,
+                answers=self.answers,
+            )
         except Exception as e:
             update_orchestration(self.db, self.run_id, OrchestrationUpdate(
                 status="failed",
@@ -122,7 +127,8 @@ class RunOrchestrator(OrchestrationHooks):
 
     # save an llm call (unsure how it will be set up so needs fine tuning)
     def saveLLMCall(self, result: LlmCall):
-        create_llm_call(result)
+        llm_call = LlmCallCreate(**result.model_dump(exclude={"call_id", "user_id", "created_at"}))
+        create_llm_call(self.db, llm_call)
 
     # orchestrator is done with it's job and we can update it with any necessary information
     def finishJob(self, result: OrchestrationResult):
