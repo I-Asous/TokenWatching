@@ -90,8 +90,6 @@ class RunOrchestrator(OrchestrationHooks):
                 self.target,
                 hook=self,
                 answers=self.answers,
-                passScore=self.validator_pass_score,
-                maxAttempts=self.max_optimization_attempts,
             )
         except Exception as e:
             update_orchestration(self.db, self.run_id, OrchestrationUpdate(

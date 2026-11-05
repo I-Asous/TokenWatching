@@ -46,11 +46,6 @@ FILLER_WORDS = frozenset({
 
 # \b word boundaries so "just" doesn't match inside "adjust", "best" inside "bestow", etc.
 FILLER_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, FILLER_WORDS)) + r")\b", re.IGNORECASE)
-REPEATED_WORD_RE = re.compile(r"\b([A-Za-z]+)(?:\s+\1\b)+", re.IGNORECASE)
-VERBOSE_EMAIL_FRAMING_RE = re.compile(
-    r"\bwrite(?:\s+me)?\s+(?:a|an)\s+(?:short\s+)?(?:e-?mail|message)\s+(?:telling|to tell)\b",
-    re.IGNORECASE,
-)
 
 #Politeness comes in phrases more than single words ("could you kindly help me", "thank you so much"),
 #so these are matched as whole spans. Each one can be cut without changing what the prompt asks for
@@ -198,16 +193,6 @@ def runRuleCheck(text: str, token_count: int, skipChecks: frozenset[str] = froze
     filler = findRemovableFiller(text)
     if filler:
         issues.append(filler)
-
-    if VERBOSE_EMAIL_FRAMING_RE.search(maskProtected(text)):
-        issues.append(
-            "Redundant email framing ('write an email telling') can be shortened to 'email'."
-        )
-
-    repeated_words = [match.group(0) for match in REPEATED_WORD_RE.finditer(maskProtected(text))]
-    if repeated_words:
-        examples = ", ".join(f"'{phrase}'" for phrase in repeated_words[:3])
-        issues.append(f"Repeated adjacent words can be shortened without changing the request: {examples}")
 
     if "\n\n\n" in text:
         issues.append("Unnecessary blank lines and or whitespace added")

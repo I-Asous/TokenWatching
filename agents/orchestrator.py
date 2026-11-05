@@ -43,9 +43,6 @@ class OrchestrationResult:
     wasOptimized: bool
     auditResult: AuditResult
     attempts: list[ValidationResult] = field(default_factory=list)
-    # Keep every candidate so the extension can explain what the Optimizer tried,
-    # including candidates rejected by validation or that saved no tokens.
-    optimizerAttempts: list[OptimizationResult] = field(default_factory=list)
     tokensSaved: int = 0
     percentSaved: float = 0.0
     changes: list[str] = field(default_factory=list)
@@ -150,15 +147,13 @@ def savesEnough(optimizationResult: OptimizationResult) -> bool:
 #The result when no rewrite is used: the prompt as the person wrote it, with their answers if they gave any
 def unchangedResult(prompt: str, finalPrompt: str, auditResult: AuditResult, vagueness: VaguenessReport,
                     promptTypes: list[str], attempts: list[ValidationResult] = None,
-                    error: str | None = None,
-                    optimizerAttempts: list[OptimizationResult] = None) -> OrchestrationResult:
+                    error: str | None = None) -> OrchestrationResult:
     return OrchestrationResult(
         originalPrompt=prompt,
         finalPrompt=finalPrompt,
         wasOptimized=False,
         auditResult=auditResult,
         attempts=attempts or [],
-        optimizerAttempts=optimizerAttempts or [],
         vagueness=vagueness,
         promptTypes=promptTypes,
         error=error,
@@ -167,15 +162,13 @@ def unchangedResult(prompt: str, finalPrompt: str, auditResult: AuditResult, vag
 #The result for a rewrite that passed, from the Optimizer or the local rewrite
 def acceptedResult(prompt: str, optimizationResult: OptimizationResult, auditResult: AuditResult,
                    attempts: list[ValidationResult], vagueness: VaguenessReport,
-                   promptTypes: list[str], error: str | None = None,
-                   optimizerAttempts: list[OptimizationResult] = None) -> OrchestrationResult:
+                   promptTypes: list[str], error: str | None = None) -> OrchestrationResult:
     return OrchestrationResult(
         originalPrompt=prompt,
         finalPrompt=optimizationResult.optimizedPrompt,
         wasOptimized=True,
         auditResult=auditResult,
         attempts=attempts,
-        optimizerAttempts=optimizerAttempts or [],
         tokensSaved=optimizationResult.tokensSaved,
         percentSaved=optimizationResult.percentSaved,
         changes=optimizationResult.changes,
@@ -187,12 +180,10 @@ def acceptedResult(prompt: str, optimizationResult: OptimizationResult, auditRes
 #Records a local rewrite's pass (no Validator call) and returns it as the accepted result
 def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, auditResult: AuditResult,
                 attempts: list[ValidationResult], vagueness: VaguenessReport, promptTypes: list[str],
-                hook: OrchestrationHooks, error: str | None = None,
-                optimizerAttempts: list[OptimizationResult] = None) -> OrchestrationResult:
+                hook: OrchestrationHooks, error: str | None = None) -> OrchestrationResult:
     localValidation = fillerOnlyValidation(clarified, localResult.optimizedPrompt)
     hook.saveValidation(localValidation)
-    return acceptedResult(prompt, localResult, auditResult, attempts + [localValidation], vagueness,
-                          promptTypes, error, optimizerAttempts)
+    return acceptedResult(prompt, localResult, auditResult, attempts + [localValidation], vagueness, promptTypes, error)
 
 """
 * @brief Runs the full Auditor -> Optimizer -> Validator pipeline on a
@@ -257,14 +248,8 @@ def acceptLocal(prompt: str, clarified: str, localResult: OptimizationResult, au
 *    the final token/cost savings (if any), and the Optimizer's list of
 *    changes for the accepted rewrite is returned.
 """
-def runPipeline(
-    prompt: str,
-    target: str = DEFAULT_TARGET,
-    hook: OrchestrationHooks | None = None,
-    answers: list[Answer] | None = None,
-    passScore: int | None = None,
-    maxAttempts: int | None = None,
-) -> OrchestrationResult:
+def runPipeline(prompt: str, target: str = DEFAULT_TARGET, hook: OrchestrationHooks | None = None,
+                answers: list[Answer] | None = None) -> OrchestrationResult:
 
     # we do this so if we want to run it without hooks, we can!
     hook = hook or OrchestrationHooks()
@@ -275,8 +260,6 @@ def runPipeline(
 
     promptTypes = detectPromptTypes(clarified)
     profile = combineProfiles(promptTypes)
-    validatorPassScore = passScore if passScore is not None else profile.passScore
-    optimizationAttemptLimit = maxAttempts if maxAttempts is not None else MAX_OPTIMIZATION_ATTEMPTS
 
     hook.updateStage("auditing")
     auditResult = auditPrompt(clarified, target, skipChecks=profile.skipChecks)
@@ -313,12 +296,12 @@ def runPipeline(
         return orchestrationResult
 
     attempts: list[ValidationResult] = []
-    optimizerAttempts: list[OptimizationResult] = []
     rejectedAttempts: list[RejectedAttempt] = []
     mustPreserve = buildMustPreserve(reference)
     maxQuestions = max(MAX_ANSWERED_QUESTIONS - len(answers), 0)
     error = None
-    for _ in range(optimizationAttemptLimit):
+
+    for _ in range(MAX_OPTIMIZATION_ATTEMPTS):
         hook.updateStage("optimizing")
         try:
             optimizationResult = optimizePrompt(clarified, auditResult.issues, target,
@@ -335,12 +318,10 @@ def runPipeline(
             logger.warning("%s, returning the original prompt", error)
             break
         hook.saveOptimization(optimizationResult)
-        optimizerAttempts.append(optimizationResult)
 
         #The Optimizer chose to ask: nothing is rewritten until the person answers
         if optimizationResult.action == "ask_user":
-            orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes,
-                                                  attempts, optimizerAttempts=optimizerAttempts)
+            orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes, attempts)
             orchestrationResult.needsClarification = True
             orchestrationResult.questions = optimizationResult.questions
             hook.finishJob(orchestrationResult)
@@ -349,8 +330,7 @@ def runPipeline(
         #The Optimizer chose the local rewrite, which only deleted politeness and filler: no Validator call
         if optimizationResult.action == "local":
             orchestrationResult = acceptLocal(prompt, clarified, optimizationResult, auditResult, attempts,
-                                              vagueness, promptTypes, hook,
-                                              optimizerAttempts=optimizerAttempts)
+                                              vagueness, promptTypes, hook)
             hook.finishJob(orchestrationResult)
             return orchestrationResult
 
@@ -385,14 +365,14 @@ def runPipeline(
             hook.saveValidation(brokenLockValidation)
             continue
 
-        #A deletion-only rewrite needs no model validation. All other rewrites are validated
-        #against the clarified prompt using the selected profile or the user's override.
+        #A rewrite that only deleted politeness and filler can't have changed the request, so it skips the
+        #Validator. Anything else is validated: an unvalidated rewrite is never sent, so a failed call falls back
         if isFillerOnlyEdit(clarified, optimizationResult.optimizedPrompt):
             validationResult = fillerOnlyValidation(clarified, optimizationResult.optimizedPrompt)
         else:
             try:
                 validationResult = validatePrompt(clarified, optimizationResult.optimizedPrompt,
-                                                  passScore=validatorPassScore,
+                                                  passScore=profile.passScore,
                                                   typeRules=profile.optimizerRules)
             except APIError as apiError:
                 error = f"Validator call failed: {apiError}"
@@ -403,8 +383,7 @@ def runPipeline(
         attempts.append(validationResult)
 
         if validationResult.passed:
-            orchestrationResult = acceptedResult(prompt, optimizationResult, auditResult, attempts,
-                                                 vagueness, promptTypes, optimizerAttempts=optimizerAttempts)
+            orchestrationResult = acceptedResult(prompt, optimizationResult, auditResult, attempts, vagueness, promptTypes)
             hook.finishJob(orchestrationResult)
 
             return orchestrationResult
@@ -414,16 +393,14 @@ def runPipeline(
         rejectedAttempts.append(
             RejectedAttempt(optimizationResult.optimizedPrompt, validationResult.reasoning)
         )
-    #No attempt passed validation within the retry amount (or an API call failed) SO fail gets closed.
     #No LLM rewrite passed within the retry amount (or an API call failed) SO fail gets closed:
     #the local rewrite still saves tokens without changing the request, otherwise the prompt goes back as is
     if localResult:
         hook.saveOptimization(localResult)
         orchestrationResult = acceptLocal(prompt, clarified, localResult, auditResult, attempts, vagueness,
-                                          promptTypes, hook, error, optimizerAttempts)
+                                          promptTypes, hook, error)
     else:
-        orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes,
-                                              attempts, error, optimizerAttempts)
+        orchestrationResult = unchangedResult(prompt, clarified, auditResult, vagueness, promptTypes, attempts, error)
     hook.finishJob(orchestrationResult)
     return orchestrationResult
 
