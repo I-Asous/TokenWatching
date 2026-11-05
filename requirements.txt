@@ -5,7 +5,7 @@ tiktoken
 spacy
 textstat
 pyyaml
-fastapi[standard]==0.142.2
+fastapi[standard]==0.162.0
 supabase==2.31.0
 email-validator
 pyjwt[crypto]
