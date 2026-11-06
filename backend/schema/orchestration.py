@@ -29,7 +29,17 @@ class OrchestrationUpdate(BaseModel):
 class OrchestrationInsert(OrchestrationCreate):
     user_id: str
 
+# an answer to a clarifying question (from result.questions or result.vagueness.questions)
+class ClarifyingAnswer(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    answer: str = Field(max_length=2000)
+
 class OrchestrationRequest(BaseModel):
     prompt: str = Field(min_length=1)
     target: str
+    # send the same prompt again with every answer so far to have them worked into the rewrite
+    answers: list[ClarifyingAnswer] = Field(default_factory=list, max_length=10)
+    # false (default): only the free local cleanup runs and the answer comes back at once, with canOptimizeFurther
+    # set when the LLM pass could do more. true: the full pass (Optimizer + Validator), e.g. from "Optimize further"
+    optimizeFurther: bool = False
     context: list[ContextCreate] = []

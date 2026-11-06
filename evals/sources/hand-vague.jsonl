@@ -1,0 +1,61 @@
+{"id": "hv-fix-it", "category": "vague", "prompt": "Fix it.", "mustKeep": [], "expect": "ask"}
+{"id": "hv-improve-this", "category": "vague", "prompt": "Improve this.", "mustKeep": [], "expect": "ask"}
+{"id": "hv-write-something", "category": "vague", "prompt": "Write something.", "mustKeep": [], "expect": "ask"}
+{"id": "hv-homework", "category": "vague", "prompt": "Help me with my homework.", "mustKeep": ["homework"], "expect": "ask"}
+{"id": "hv-summarize-article", "category": "vague", "prompt": "Summarize the article.", "mustKeep": ["article"], "expect": "ask"}
+{"id": "hv-translate-this", "category": "vague", "prompt": "Translate this.", "mustKeep": [], "expect": "ask"}
+{"id": "hv-presentation-polite", "category": "vague", "prompt": "Hi! Could you please help me make my presentation better? Thank you so much!", "mustKeep": ["presentation"], "expect": "ask"}
+{"id": "hv-resume-checks", "category": "vague", "prompt": "Review my resume for typos, weak verbs, and missing metrics.", "mustKeep": ["resume"], "expect": "ask"}
+{"id": "hv-code-not-working", "category": "vague", "prompt": "Why is my code not working?", "mustKeep": ["code"], "expect": "ask"}
+{"id": "hv-write-essay", "category": "vague", "prompt": "Write an essay.", "mustKeep": ["essay"], "expect": "ask"}
+{"id": "hv-optimize-function", "category": "vague", "prompt": "Optimize my function.", "mustKeep": ["function"], "expect": "ask"}
+{"id": "hv-explain-error", "category": "vague", "prompt": "Explain the error.", "mustKeep": ["error"], "expect": "ask"}
+{"id": "hv-plan-trip", "category": "vague", "prompt": "Plan a trip.", "mustKeep": ["trip"], "expect": "ask"}
+{"id": "hv-name-ideas", "category": "vague", "prompt": "Give me some name ideas.", "mustKeep": ["name ideas"], "expect": "ask"}
+{"id": "hv-check-email", "category": "vague", "prompt": "Can you check my email before I send it?", "mustKeep": ["email"], "expect": "ask"}
+{"id": "hv-design-logo", "category": "vague", "prompt": "Design a logo.", "mustKeep": ["logo"], "expect": "ask"}
+{"id": "hv-script-crashing", "category": "vague", "prompt": "Hey, sorry to bug you, but my script keeps crashing and I really don't know why. Can you help? Thanks!", "mustKeep": ["script keeps crashing"], "expect": "ask"}
+{"id": "hv-write-function", "category": "vague", "prompt": "Write a function.", "mustKeep": ["function"], "expect": "ask"}
+{"id": "hv-email-boss", "category": "vague", "prompt": "Write an email to my boss.", "mustKeep": ["email", "boss"], "expect": "ask"}
+{"id": "hv-better-title", "category": "vague", "prompt": "Give me a better title.", "mustKeep": ["title"], "expect": "ask"}
+{"id": "hv-analyze-data", "category": "vague", "prompt": "Analyze my data and tell me what's interesting.", "mustKeep": ["data"], "expect": "ask"}
+{"id": "hv-grade-paper", "category": "vague", "prompt": "Grade this paper.", "mustKeep": ["paper"], "expect": "ask"}
+{"id": "hv-respond-message", "category": "vague", "prompt": "How should I respond to this message?", "mustKeep": ["message"], "expect": "ask"}
+{"id": "hv-fix-formatting", "category": "vague", "prompt": "Fix the formatting.", "mustKeep": ["formatting"], "expect": "ask"}
+{"id": "hv-cover-letter-polite", "category": "vague", "prompt": "Hello! I hope you're doing well. Could you please proofread my cover letter for me? I'd really appreciate it, thanks so much!", "mustKeep": ["cover letter"], "expect": "ask"}
+{"id": "hv-translate-text-polite", "category": "vague", "prompt": "Hi, could you translate my text into Spanish please? Thanks!", "mustKeep": ["Spanish"], "expect": "ask"}
+{"id": "hv-design-pop", "category": "vague", "prompt": "Make the design pop more.", "mustKeep": ["design"], "expect": "ask"}
+{"id": "hv-convert-file", "category": "vague", "prompt": "Convert this file.", "mustKeep": ["file"], "expect": "ask"}
+{"id": "hv-shorten-essay", "category": "vague", "prompt": "Shorten my essay.", "mustKeep": ["essay"], "expect": "ask"}
+{"id": "hv-code-cleaner", "category": "vague", "prompt": "Make my code cleaner and more professional.", "mustKeep": ["code"], "expect": "ask"}
+{"id": "hv-marketing-strategy", "category": "vague", "prompt": "Write a marketing strategy.", "mustKeep": ["marketing strategy"], "expect": "ask"}
+{"id": "hv-answer-these", "category": "vague", "prompt": "Answer these questions.", "mustKeep": ["questions"], "expect": "ask"}
+{"id": "hv-review-pr", "category": "vague", "prompt": "Review my PR.", "mustKeep": ["PR"], "expect": "ask"}
+{"id": "hv-recipe-healthier", "category": "vague", "prompt": "Make this recipe healthier.", "mustKeep": ["recipe"], "expect": "ask"}
+{"id": "hv-write-bio", "category": "vague", "prompt": "Write my bio.", "mustKeep": ["bio"], "expect": "ask"}
+{"id": "hv-come-up-with-ideas", "category": "vague", "prompt": "Come up with ideas.", "mustKeep": ["ideas"], "expect": "ask"}
+{"id": "hv-sql-polite", "category": "vague", "prompt": "Please could you fix my SQL query? It's not returning the right results. Thank you!", "mustKeep": ["SQL query"], "expect": "ask"}
+{"id": "hv-business-idea", "category": "vague", "prompt": "Thoughts on my business idea?", "mustKeep": ["business idea"], "expect": "ask"}
+{"id": "hv-these-reviews", "category": "vague", "prompt": "Summarize these reviews and tell me the main complaint.", "mustKeep": ["reviews", "main complaint"], "expect": "ask"}
+{"id": "hv-slides-heavy", "category": "vague", "prompt": "Good morning! I hope your day is going great. I have a big meeting tomorrow and I'm kind of nervous, so I was wondering if you could make my slides look more professional? Thank you so much in advance!", "mustKeep": ["slides", "more professional"], "expect": "ask"}
+{"id": "hvn-fix-with-code", "category": "vague", "prompt": "Fix this:\n```js\nconst total = prices.reduce((a, b) => a + b);\n```\nIt throws on an empty array.", "mustKeep": ["const total = prices.reduce((a, b) => a + b);", "empty array"], "expect": "unchanged"}
+{"id": "hvn-translate-with-text", "category": "vague", "prompt": "Translate this into Portuguese: \"The museum is closed on Mondays.\"", "mustKeep": ["Portuguese", "\"The museum is closed on Mondays.\""], "expect": "unchanged"}
+{"id": "hvn-shorten-with-text", "category": "vague", "prompt": "Shorten this to one sentence: \"We are excited to announce that, after many months of careful planning and hard work by the whole team, our new website is finally live.\"", "mustKeep": ["one sentence", "\"We are excited to announce that, after many months of careful planning and hard work by the whole team, our new website is finally live.\""], "expect": "unchanged"}
+{"id": "hvn-headline-direction", "category": "vague", "prompt": "Make this headline shorter and punchier: \"Our Company Is Now Offering A Brand New Range Of Eco-Friendly Cleaning Products\"", "mustKeep": ["shorter and punchier", "\"Our Company Is Now Offering A Brand New Range Of Eco-Friendly Cleaning Products\""], "expect": "unchanged"}
+{"id": "hvn-novel-specific", "category": "vague", "prompt": "Recommend a sci-fi novel under 300 pages for someone who loved The Martian.", "mustKeep": ["sci-fi novel", "300 pages", "The Martian"], "expect": "unchanged"}
+{"id": "hvn-email-boss-specific", "category": "vague", "prompt": "Write an email to my boss asking to work from home on Fridays starting next month.", "mustKeep": ["boss", "work from home on Fridays", "next month"], "expect": "unchanged"}
+{"id": "hvn-logo-specific", "category": "vague", "prompt": "Describe three logo concepts for a cat café called Purrfect Brew.", "mustKeep": ["three logo concepts", "cat café", "Purrfect Brew"], "expect": "unchanged"}
+{"id": "hvn-compare-phones", "category": "vague", "prompt": "Compare the iPhone 15 and the Pixel 8 on battery life and camera.", "mustKeep": ["iPhone 15", "Pixel 8", "battery life and camera"], "expect": "unchanged"}
+{"id": "hvn-title-with-text", "category": "vague", "prompt": "Give me a better title than \"Some Thoughts on Gardening\" for a blog post about growing herbs on a balcony.", "mustKeep": ["\"Some Thoughts on Gardening\"", "growing herbs on a balcony"], "expect": "unchanged"}
+{"id": "cf-keep-going", "category": "chat-followup", "prompt": "Keep going.", "mustKeep": [], "expect": "unchanged"}
+{"id": "cf-shorter-please", "category": "chat-followup", "prompt": "Shorter, please.", "mustKeep": ["Shorter"], "expect": "unchanged"}
+{"id": "cf-thanks-perfect", "category": "chat-followup", "prompt": "Thanks, that's perfect!", "mustKeep": ["perfect"], "expect": "unchanged"}
+{"id": "cf-yes-do-that", "category": "chat-followup", "prompt": "Yes, do that.", "mustKeep": [], "expect": "unchanged"}
+{"id": "cf-again-simpler", "category": "chat-followup", "prompt": "Explain it again but simpler.", "mustKeep": ["simpler"], "expect": "unchanged"}
+{"id": "cf-more-formal", "category": "chat-followup", "prompt": "Rewrite it to sound more formal.", "mustKeep": ["more formal"], "expect": "unchanged"}
+{"id": "cf-make-shorter", "category": "chat-followup", "prompt": "Make this shorter.", "mustKeep": ["shorter"], "expect": "unchanged"}
+{"id": "cf-in-python", "category": "chat-followup", "prompt": "Now do it in Python.", "mustKeep": ["Python"], "expect": "unchanged"}
+{"id": "cf-option-two", "category": "chat-followup", "prompt": "Let's go with option 2. Expand it into a full plan.", "mustKeep": ["option 2", "full plan"], "expect": "unchanged"}
+{"id": "cf-thanks-one-more", "category": "chat-followup", "prompt": "Thanks so much! One more thing: how long will it keep in the fridge?", "mustKeep": ["fridge"], "expect": "auto", "direct": "How long will it keep in the fridge?"}
+{"id": "cf-polite-add-section", "category": "chat-followup", "prompt": "That's great, thank you! Could you please also add a section about pricing?", "mustKeep": ["section about pricing"], "expect": "auto", "direct": "Also add a section about pricing."}
+{"id": "cf-correction", "category": "chat-followup", "prompt": "No, that's wrong. The meeting is on Thursday, not Tuesday.", "mustKeep": ["Thursday, not Tuesday"], "expect": "unchanged"}

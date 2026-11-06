@@ -23,8 +23,8 @@ class FakeRun:  # pylint: disable=too-few-public-methods
     runs = []
     fail = False
 
-    def __init__(self, user_id, prompt, target, context, on_stage):
-        self.user_id, self.on_stage = user_id, on_stage
+    def __init__(self, user_id, prompt, target, context, llm, on_stage):
+        self.user_id, self.llm, self.on_stage = user_id, llm, on_stage
         FakeRun.runs.append(self)
 
     def execute(self):
@@ -62,6 +62,15 @@ def test_streams_stages_then_result_then_closes(client, fake_run):
             ws.receive_json()
     # the user comes from the token
     assert [run.user_id for run in fake_run.runs] == ["user_me"]
+
+
+@pytest.mark.parametrize("extra,llm", [({}, False), ({"optimizeFurther": True}, True)])
+def test_paid_agents_only_run_when_asked(client, fake_run, extra, llm):
+    with client.websocket_connect(URL, headers=ORIGIN) as ws:
+        ws.send_json({"token": make_token(), **PROMPT, **extra})
+        while ws.receive_json()["stage"] != "done":
+            pass
+    assert [run.llm for run in fake_run.runs] == [llm]
 
 
 def test_failure_does_not_leak_details(client, fake_run):

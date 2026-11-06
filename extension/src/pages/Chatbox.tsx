@@ -9,6 +9,10 @@ type ChatTurn = {
   stage: string | null;
   wasOptimized: boolean | null;
   optimizationMessage: string | null;
+  // the quick result came back and the LLM pass could still improve it
+  canOptimizeFurther: boolean;
+  // the "Optimize further" request is running
+  optimizingFurther: boolean;
 };
 
 type OrchestrationResponse = {
@@ -16,6 +20,7 @@ type OrchestrationResponse = {
   wasOptimized: boolean;
   error?: string | null;
   attempts?: Array<{ passed: boolean }>;
+  canOptimizeFurther?: boolean;
 };
 
 const STAGE_MESSAGES: Record<string, string> = {
@@ -23,6 +28,24 @@ const STAGE_MESSAGES: Record<string, string> = {
   optimizing: "Optimizing prompt",
   validating: "Checking the meaning stayed the same",
 };
+
+// The loading icon with the stage the agents are on
+function StageProgress({ stage }: { stage: string | null }) {
+  return (
+    <p className="progress" role="status">
+      <span className="spinner" />
+      {STAGE_MESSAGES[stage ?? ""] ?? "Working on your prompt…"}
+    </p>
+  );
+}
+
+// What to show under a result that wasn't optimized
+function optimizationMessage(result: OrchestrationResponse) {
+  if (result.error) return `Optimization failed: ${result.error}`;
+  if (result.canOptimizeFurther) return "No quick fixes found.";
+  if (result.attempts?.length) return "No rewrite passed validation; original returned.";
+  return "Original returned unchanged (no changes needed or no token savings).";
+}
 
 const promptExamples = [
   "Write a polite email asking my manager to move our meeting to tomorrow.",
@@ -74,6 +97,10 @@ function Chatbox() {
     };
   }, [promptValue]);
 
+  function setTurnStage(turnId: number, stage: string) {
+    setTurns((previousTurns) => previousTurns.map((turn) => (turn.id === turnId ? { ...turn, stage } : turn)));
+  }
+
   async function sendPrompt() {
     const txtPrompt = promptValue.trim();
     if (!txtPrompt) {
@@ -88,12 +115,16 @@ function Chatbox() {
     const turnId = Date.now();
     setTurns((previousTurns) => [
       ...previousTurns,
-      { id: turnId, prompt: txtPrompt, result: null, status: "processing", stage: null, wasOptimized: null, optimizationMessage: null },
+      {
+        id: turnId, prompt: txtPrompt, result: null, status: "processing", stage: null, wasOptimized: null,
+        optimizationMessage: null, canOptimizeFurther: false, optimizingFurther: false,
+      },
     ]);
 
     try {
-      const result = await runOrchestrator({ prompt: txtPrompt, target: "chatgpt" }, (stage) =>
-        setTurns((previousTurns) => previousTurns.map((turn) => (turn.id === turnId ? { ...turn, stage } : turn))),
+      const result = await runOrchestrator(
+        { prompt: txtPrompt, target: "chatgpt" },
+        (stage) => setTurnStage(turnId, stage),
       ) as OrchestrationResponse;
 
       setTurns((previousTurns) => previousTurns.map((turn) =>
@@ -103,11 +134,8 @@ function Chatbox() {
               result: result.finalPrompt,
               status: "complete",
               wasOptimized: result.wasOptimized,
-              optimizationMessage: result.error
-                ? `Optimization failed: ${result.error}`
-                : result.attempts?.length
-                  ? "No rewrite passed validation; original returned."
-                  : "Original returned unchanged (no changes needed or no token savings).",
+              optimizationMessage: optimizationMessage(result),
+              canOptimizeFurther: Boolean(result.canOptimizeFurther),
             }
           : turn,
       ));
@@ -120,6 +148,43 @@ function Chatbox() {
       ));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  // Runs the LLM pass (Optimizer + Validator) on a turn's original prompt and replaces its quick result.
+  // If it fails, the quick result stays and the error is shown
+  async function optimizeFurther(turnId: number, txtPrompt: string) {
+    setSendError("");
+    setTurns((previousTurns) => previousTurns.map((turn) =>
+      turn.id === turnId ? { ...turn, optimizingFurther: true, stage: null } : turn,
+    ));
+
+    try {
+      const result = await runOrchestrator(
+        { prompt: txtPrompt, target: "chatgpt", optimizeFurther: true },
+        (stage) => setTurnStage(turnId, stage),
+      ) as OrchestrationResponse;
+
+      setTurns((previousTurns) => previousTurns.map((turn) =>
+        turn.id !== turnId
+          ? turn
+          // a full pass that found nothing better keeps the quick rewrite instead of going back to the original
+          : !result.wasOptimized && turn.wasOptimized
+            ? { ...turn, canOptimizeFurther: false, optimizingFurther: false }
+            : {
+                ...turn,
+                result: result.finalPrompt,
+                wasOptimized: result.wasOptimized,
+                optimizationMessage: optimizationMessage(result),
+                canOptimizeFurther: false,
+                optimizingFurther: false,
+              },
+      ));
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Could not reach the backend");
+      setTurns((previousTurns) => previousTurns.map((turn) =>
+        turn.id === turnId ? { ...turn, optimizingFurther: false } : turn,
+      ));
     }
   }
 
@@ -137,12 +202,7 @@ function Chatbox() {
               </div>
               <div className="chat-message result-message">
                 <span className="message-label">Result</span>
-                {turn.status === "processing" && (
-                  <p className="progress" role="status">
-                    <span className="spinner" />
-                    {STAGE_MESSAGES[turn.stage ?? ""] ?? "Working on your prompt…"}
-                  </p>
-                )}
+                {turn.status === "processing" && <StageProgress stage={turn.stage} />}
                 {turn.status === "error" && <p>Could not generate a result. You can try again.</p>}
                 {turn.status === "complete" && (
                   <>
@@ -152,6 +212,16 @@ function Chatbox() {
                         ? "Optimized prompt"
                         : turn.optimizationMessage}
                     </small>
+                    {turn.optimizingFurther && <StageProgress stage={turn.stage} />}
+                    {turn.canOptimizeFurther && !turn.optimizingFurther && (
+                      <button
+                        type="button"
+                        className="optimize-further-button"
+                        onClick={() => optimizeFurther(turn.id, turn.prompt)}
+                      >
+                        Optimize further
+                      </button>
+                    )}
                   </>
                 )}
               </div>

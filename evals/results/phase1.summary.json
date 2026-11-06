@@ -1,0 +1,92 @@
+{
+  "runs": 120,
+  "outcomes": {
+    "optimized": 22,
+    "fillerOnly": 20,
+    "unchanged": 67,
+    "ask": 3,
+    "error": 8,
+    "crash": 0
+  },
+  "expectMatchRate": 0.767,
+  "expectMatchByCategory": {
+    "code": 0.917,
+    "concise": 1.0,
+    "constraint": 0.75,
+    "duplicates": 0.0,
+    "filler": 0.778,
+    "injection": 0.667,
+    "long": 0.5,
+    "multi": 0.667,
+    "non-english": 0.5,
+    "optional": 1.0,
+    "security": 0.5,
+    "steps": 1.0,
+    "url": 1.0,
+    "vague": 1.0
+  },
+  "expectMisses": [
+    "code-review",
+    "constraint-negation",
+    "dup-french-rev",
+    "dup-repeat",
+    "filler-adverbs",
+    "filler-recipe",
+    "german",
+    "injection-polite",
+    "long-system",
+    "multi-translate",
+    "security-sql"
+  ],
+  "optimizedRate": 0.35,
+  "totalOriginalTokens": 4047,
+  "totalTokensSaved": 527,
+  "meanPercentSavedAll": 10.71,
+  "meanPercentSavedOptimized": 30.6,
+  "mustKeepViolations": [],
+  "rewriteProblemCases": [],
+  "validatorCalls": 45,
+  "attemptPassRate": 0.84,
+  "firstAttemptPassRate": 0.788,
+  "optimizerRuns": 42,
+  "optimizerTurnsMean": 1.31,
+  "optimizerTurnsMax": 2,
+  "optimizerTurnsDistribution": {
+    "1": 29,
+    "2": 13
+  },
+  "llmCallsMean": 0.83,
+  "llmCallsTotal": 100,
+  "latencyMsP50": 22,
+  "latencyMsP95": 34901,
+  "latencyMsP50WithLLM": 32716,
+  "latencyMsP95WithLLM": 46358,
+  "latencyMsMax": 81285,
+  "apiErrors": 15,
+  "crashes": [],
+  "tokensPerModel": {
+    "claude-sonnet-4-6": {
+      "input_tokens": 19428,
+      "output_tokens": 12270,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    },
+    "claude-sonnet-5-5": {
+      "input_tokens": 194,
+      "output_tokens": 13304,
+      "cache_read_input_tokens": 222379,
+      "cache_creation_input_tokens": 41924
+    }
+  },
+  "pipelineCostUsd": 0.525048,
+  "pipelineCostPerRunUsd": 0.004375,
+  "pipelineCostPerLLMRunUsd": 0.012501,
+  "pipelineCostPerModelUsd": {
+    "claude-sonnet-4-6": 0.242334,
+    "claude-sonnet-5-5": 0.282714
+  },
+  "unpricedModels": [],
+  "savedValueUsd": 0.001054,
+  "netSavingsUsd": -0.523994,
+  "breakEvenSends": 498.1
+}

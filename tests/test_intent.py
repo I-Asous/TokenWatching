@@ -130,6 +130,17 @@ def test_non_english_prompt_is_skipped():
     intent = detectIntent("¿Podrías por favor ayudarme a escribir un poema sobre el mar? ¡Muchas gracias!")
     assert intent.isEnglish is False and intent.actions == []
 
+#A non-Latin script (Japanese here) is caught too, even though none of its words can appear in FOREIGN_WORDS
+#(a Latin-script list). Without this, looksEnglish defaulted a script it can't match against to "English"
+def test_non_latin_script_prompt_is_skipped():
+    intent = detectIntent("すみませんが、再帰関数について簡単に説明していただけますか?よろしくお願いします。")
+    assert intent.isEnglish is False and intent.actions == []
+
+#A couple of foreign words or names inside an otherwise-English prompt don't trip the non-Latin-script check
+def test_mostly_english_prompt_with_a_foreign_word_is_english():
+    intent = detectIntent("Explain what a 日本 (Japan) themed variable name would look like in Python.")
+    assert intent.isEnglish is True
+
 #Rewrites that keep every task pass, even when the verb or the sentence shape changes
 @pytest.mark.parametrize("original, rewrite", [
     ("Hi! Could you please help me fix this bug? Thanks!", "Fix this bug."),

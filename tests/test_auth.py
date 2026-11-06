@@ -115,12 +115,13 @@ def test_token_for_another_origin_rejected(client, db):
     pytest.param(make_token(azp=EXTENSION_ORIGIN), id="azp-extension"),
     pytest.param(make_token(drop=("azp",)), id="azp-missing"),
 ])
-def test_valid_token_accepted_with_token_identity(client, db, user_clients, token):
+def test_valid_token_accepted_with_token_identity(client, db, token):
+    # the user being acted on comes from the token, never from the request: /prompts reads through a
+    # supabase client built from the caller's own token, so RLS limits it to their rows
     assert call_verified(client, token).status_code == 200
-    assert user_clients == [token]
-    [(name, (user_client,))] = db.calls
+    [(name, (userClient,))] = db.calls
     assert name == "get_user_input_prompts"
-    assert user_client.token == token
+    assert userClient.token == token
 
 
 def test_orchestrator_rejects_bad_token(client, db, monkeypatch):
@@ -133,6 +134,25 @@ def test_orchestrator_rejects_bad_token(client, db, monkeypatch):
                            headers=bearer(make_token(exp=int(time.time()) - 10)))
     assert response.status_code == 401
     assert not db.calls
+
+
+@pytest.mark.parametrize("body, llm", [
+    pytest.param({}, False, id="default-quick"),
+    pytest.param({"optimizeFurther": True}, True, id="optimize-further"),
+])
+def test_orchestrator_llm_pass_is_opt_in(client, monkeypatch, body, llm):
+    # the Optimizer and Validator only run when the request asks for them ("Optimize further")
+    import routes.orchestrator  # pylint: disable=import-outside-toplevel
+    calls = []
+    class FakeRun:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+        def execute(self):
+            return None
+    monkeypatch.setattr(routes.orchestrator, "RunOrchestrator", FakeRun)
+    client.post("/orchestrator", json={"prompt": "hi", "target": "chatgpt", **body},
+                headers=bearer(make_token(azp=EXTENSION_ORIGIN)))
+    assert [call["llm"] for call in calls] == [llm]
 
 
 # --- known holes: these assert the secure behaviour and fail until auth.py is fixed ---

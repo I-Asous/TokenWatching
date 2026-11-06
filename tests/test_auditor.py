@@ -140,6 +140,15 @@ def test_findRemovableFiller_flags_politeness_phrases():
 def test_findRemovableFiller_ignores_small_cuts(prompt):
     assert auditor.findRemovableFiller(prompt) is None
 
+#A 3-token politeness phrase at 10% of the prompt isn't flagged (MIN_REMOVABLE_SHARE), even though a
+#multi-translate prompt like this one is otherwise worth a rewrite: 3 repeated live runs showed nothing
+#else in the sentence is safely cuttable, so the Optimizer could never clear the orchestrator's own
+#MIN_TOKENS_SAVED=5 floor on it and flagging it only paid for a guaranteed failure (evals/results/phase3-repeat.jsonl)
+def test_findRemovableFiller_ignores_share_the_optimizer_cant_use():
+    prompt = ("Could you please translate this sentence into French and also explain the grammar of the "
+              "verb tense you used? 'I would have gone if I had known.'")
+    assert auditor.findRemovableFiller(prompt) is None
+
 #Code blocks are the user's material: politeness inside them isn't counted
 def test_estimateRemovableTokens_skips_code_blocks():
     prompt = "Fix this:\n```python\n# thanks, please just work\ndef add(a, b): return a - b\n```"
@@ -154,10 +163,39 @@ def test_estimateRemovableTokens_merges_overlaps():
 def test_estimateRemovableTokens_keeps_options():
     assert auditor.estimateRemovableTokens("Write the parser. Maybe add tests. Possibly add a README.")[0] == 0
 
-#The LLM review runs from LLM_REVIEW_MIN_TOKENS when the rule checks find nothing, and not below it
-@pytest.mark.parametrize("tokens, reviewed", [(auditor.LLM_REVIEW_MIN_TOKENS - 1, False), (auditor.LLM_REVIEW_MIN_TOKENS, True)])
-def test_auditPrompt_llm_review_gate(monkeypatch, tokens, reviewed):
-    monkeypatch.setattr(auditor, "countTokens", lambda text, target: tokens)
-    monkeypatch.setattr(auditor, "runRuleCheck", lambda text, token_count, skipChecks: [])
-    monkeypatch.setattr(auditor, "llmReview", lambda text: ["Repeats the same instruction twice."])
-    assert auditor.auditPrompt("Write a report.").issues == (["Repeats the same instruction twice."] if reviewed else [])
+#auditPrompt makes no LLM call of its own (removed 11/4/2026: folded into the Optimizer's own first look,
+#see orchestrator.MIN_TOKENS_TO_LET_OPTIMIZER_LOOK) -- its issues are exactly runRuleCheck's, nothing added
+def test_auditPrompt_has_no_llm_call(monkeypatch):
+    monkeypatch.setattr(auditor, "runRuleCheck", lambda text, token_count, skipChecks: ["an issue"])
+    assert auditor.auditPrompt("Write a long report." * 50).issues == ["an issue"]
+
+#Two or more sentences asking for the same length in different words are flagged as one repeated instruction
+def test_findRepeatedLengthWording_flags_different_words_for_the_same_length():
+    text = "Give me a quick summary of the French Revolution. Make it short. Just the main points, nothing too long or detailed."
+    issue = auditor.findRepeatedLengthWording(text)
+    assert issue is not None and "quick" in issue and "short" in issue
+
+#Two different sentences each asking for a different length, about different things, aren't a repeat
+def test_findRepeatedLengthWording_ignores_different_targets():
+    assert auditor.findRepeatedLengthWording("Write a short intro. Make the conclusion detailed.") is None
+    assert auditor.findRepeatedLengthWording("Write a short intro and a detailed conclusion.") is None
+    assert auditor.findRepeatedLengthWording("Write a short story about a dragon.") is None
+
+#Sentences that repeat the same length word via different lemmas (e.g. "reverses" and "reverse") are
+#caught by the lower REPEAT_SIMILARITY bar (0.7), tuned from a real near-miss at 0.75 overlap
+def test_runSpacyCheck_flags_close_but_not_identical_repeat():
+    text = ("Write a function that reverses a string in Go. The function should reverse a string. Make sure "
+            "it reverses the string correctly, and handle Unicode characters properly so multi-byte "
+            "characters are reversed correctly too.")
+    assert any("repeat" in issue.lower() for issue in auditor.runSpacyCheck(text))
+
+
+#Wordy phrases are flagged once shortening them saves MIN_REMOVABLE_TOKENS, the same bar as filler
+def test_findWordyPhrases_flags_enough_savings():
+    issue = auditor.findWordyPhrases("Due to the fact that the API is able to time out, add retries prior to the release.")
+    assert issue is not None and "'Due to the fact that' -> 'because'" in issue
+    assert auditor.findWordyPhrases("Add retries in order to handle timeouts.") is None
+
+#A phrase inside quoted text is the person's material, not their wording
+def test_findWordyPhrases_skips_quoted_text():
+    assert auditor.findWordyPhraseMatches('Translate "due to the fact that" and "in the event that" into French.') == []

@@ -39,19 +39,19 @@ The spaCy checks need the English model: `pip install -r requirements.txt` then 
 
 ### Bugs encountered + fixes
 
-| Bug                                                                                 | Cause                                                                                                                                                                                                                                         | Fix                                                                                                                                                                                                                                                                             |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NameError: name 'AuditResult' is not defined`                                    | Function return type was annotated`-> AuditResult`, but the dataclass was actually named `Auditor` at the time (naming mismatch from an earlier refactor)                                                                                 | Renamed the dataclass to`AuditResult`, defined it before any function references it                                                                                                                                                                                           |
-| `TypeError: AuditResult.__init__() got an unexpected keyword argument 'severity'` | `auditPrompt()` was updated to pass `severity=severity` into `AuditResult(...)`, but the `AuditResult` dataclass definition hadn't been updated to include a `severity` field yet so edits were made in one place but not the other | Added`severity: str = "Low"` as a field on `AuditResult`                                                                                                                                                                                                                    |
-| Would-be`ZeroDivisionError` on empty prompt input                                 | `if word_count > 0 or (token_count / word_count) > 1:` — used `or` instead of `and`. With `or`, Python still evaluates the division even when `word_count` is 0, since the check doesn't short-circuit the way `and` does        | Changed`or` → `and`. Now if `word_count` is 0, Python short-circuits and never evaluates the division — no crash, and the ratio check also works correctly (previously `or` made the condition nearly always `True`, so the check wasn't really filtering anything) |
-| Would-be`NameError: name 'llm_review' is not defined`                             | `auditPrompt()` called `llm_review(prompt)` (snake_case), but the function was actually defined as `llmReview` (camelCase) — naming drift between edits                                                                                | Corrected the call site to`llmReview(prompt)`, matching the actual function name                                                                                                                                                                                              |
-| `estimatedCost` was `0.0` for almost every prompt | `estimateCost()` rounded to 3 decimals, and a single prompt costs a fraction of a cent (any prompt under about 170 tokens rounded to $0.000) | Removed the rounding. The function returns the raw value (30 tokens → `0.00009`) and callers round when they display it |
-| The rate parameter's name didn't match the math | It was called `rate_per_100k`, but the function divides by 1,000 and the default `0.003` is a per-1K rate. Changing the divisor to 100,000 to match the name made costs 100x too low and failed `test_estimateCost_scales_with_tokens` (1M tokens gave $0.03, not $3.00) | Kept the divisor at 1,000 and renamed the parameter to `rate_per_1k` |
-| An API error in the LLM review crashed the whole audit | `llmReview()` called `client.messages.create()` with no `try`, so a rate limit or network error raised out of `auditPrompt()` and the pipeline | Catch `APIError`, log a warning, and return `[]`. The audit still returns its rule-based issues |
-| Preamble lines became issues, and real issues could be dropped | Every non-empty line of the free-text reply was an issue (including "Here are the issues:"), and the whole reply was thrown away if "none found" appeared anywhere in it | The reply comes back through the `report_issues` tool as a list, so there is no text to parse |
-| A prompt could steer its own review | The prompt was pasted under `PROMPT:` in the same message as the instructions | Instructions moved to `system`, and the prompt is wrapped in `<prompt>` tags with an instruction to treat it only as text |
-| `NameError: name 'lru_cache' is not defined` when collecting tests | The `@lru_cache` decorator was added before its import, so importing `auditor.py` (and `orchestrator.py`, which imports it) failed | Added `from functools import lru_cache` |
-| `LookupError: Resource cmudict not found` in the textstat tests | textstat 0.7.13 counts syllables with NLTK's `cmudict` and downloads it on first use. On macOS the python.org Python had no SSL certificates, so the download failed silently and loading the list raised | `runReadabilityCheck()` catches `LookupError` and skips only the reading ease check. Docker and CI download `cmudict` up front; locally run `Install Certificates.command`, then `python -m nltk.downloader cmudict` |
+| Bug                                                                                 | Cause                                                                                                                                                                                                                                                                          | Fix                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NameError: name 'AuditResult' is not defined`                                    | Function return type was annotated`-> AuditResult`, but the dataclass was actually named `Auditor` at the time (naming mismatch from an earlier refactor)                                                                                                                  | Renamed the dataclass to`AuditResult`, defined it before any function references it                                                                                                                                                                                           |
+| `TypeError: AuditResult.__init__() got an unexpected keyword argument 'severity'` | `auditPrompt()` was updated to pass `severity=severity` into `AuditResult(...)`, but the `AuditResult` dataclass definition hadn't been updated to include a `severity` field yet so edits were made in one place but not the other                                  | Added`severity: str = "Low"` as a field on `AuditResult`                                                                                                                                                                                                                    |
+| Would-be`ZeroDivisionError` on empty prompt input                                 | `if word_count > 0 or (token_count / word_count) > 1:` — used `or` instead of `and`. With `or`, Python still evaluates the division even when `word_count` is 0, since the check doesn't short-circuit the way `and` does                                         | Changed`or` → `and`. Now if `word_count` is 0, Python short-circuits and never evaluates the division — no crash, and the ratio check also works correctly (previously `or` made the condition nearly always `True`, so the check wasn't really filtering anything) |
+| Would-be`NameError: name 'llm_review' is not defined`                             | `auditPrompt()` called `llm_review(prompt)` (snake_case), but the function was actually defined as `llmReview` (camelCase) — naming drift between edits                                                                                                                 | Corrected the call site to`llmReview(prompt)`, matching the actual function name                                                                                                                                                                                              |
+| `estimatedCost` was `0.0` for almost every prompt                               | `estimateCost()` rounded to 3 decimals, and a single prompt costs a fraction of a cent (any prompt under about 170 tokens rounded to $0.000)                                                                                                                                 | Removed the rounding. The function returns the raw value (30 tokens → `0.00009`) and callers round when they display it                                                                                                                                                      |
+| The rate parameter's name didn't match the math                                     | It was called `rate_per_100k`, but the function divides by 1,000 and the default `0.003` is a per-1K rate. Changing the divisor to 100,000 to match the name made costs 100x too low and failed `test_estimateCost_scales_with_tokens` (1M tokens gave $0.03, not $3.00) | Kept the divisor at 1,000 and renamed the parameter to `rate_per_1k`                                                                                                                                                                                                          |
+| An API error in the LLM review crashed the whole audit                              | `llmReview()` called `client.messages.create()` with no `try`, so a rate limit or network error raised out of `auditPrompt()` and the pipeline                                                                                                                         | Catch `APIError`, log a warning, and return `[]`. The audit still returns its rule-based issues                                                                                                                                                                             |
+| Preamble lines became issues, and real issues could be dropped                      | Every non-empty line of the free-text reply was an issue (including "Here are the issues:"), and the whole reply was thrown away if "none found" appeared anywhere in it                                                                                                       | The reply comes back through the `report_issues` tool as a list, so there is no text to parse                                                                                                                                                                                 |
+| A prompt could steer its own review                                                 | The prompt was pasted under `PROMPT:` in the same message as the instructions                                                                                                                                                                                                | Instructions moved to `system`, and the prompt is wrapped in `<prompt>` tags with an instruction to treat it only as text                                                                                                                                                   |
+| `NameError: name 'lru_cache' is not defined` when collecting tests                | The `@lru_cache` decorator was added before its import, so importing `auditor.py` (and `orchestrator.py`, which imports it) failed                                                                                                                                       | Added `from functools import lru_cache`                                                                                                                                                                                                                                       |
+| `LookupError: Resource cmudict not found` in the textstat tests                   | textstat 0.7.13 counts syllables with NLTK's `cmudict` and downloads it on first use. On macOS the python.org Python had no SSL certificates, so the download failed silently and loading the list raised                                                                    | `runReadabilityCheck()` catches `LookupError` and skips only the reading ease check. Docker and CI download `cmudict` up front; locally run `Install Certificates.command`, then `python -m nltk.downloader cmudict`                                                  |
 
 ### Known limitations / things to revisit
 
@@ -87,7 +87,7 @@ Offline unit tests. They need no API key and never call Claude. Run from the rep
 | `test_runReadabilityCheck_skips_short_text_and_code`   | Prompts under 20 words and prompts with a code block are skipped              |
 | `test_runSpacyCheck_flags_repeated_sentences`          | A sentence said twice is flagged as a repeat (needs the spaCy model)          |
 | `test_runSpacyCheck_flags_adverb_heavy_text`           | An adverb-heavy prompt is flagged, a plain one isn't (needs the spaCy model)  |
-| `test_runSpacyCheck_without_model_returns_no_issues`   | Without the model the spaCy checks return `[]` and the rest still runs        |
+| `test_runSpacyCheck_without_model_returns_no_issues`   | Without the model the spaCy checks return `[]` and the rest still runs      |
 
 ## CI/CD (9/23/2026)
 
@@ -101,24 +101,30 @@ Replaced the old pylint-only workflow (which was failing on every PR at a 5.61/1
 
 ## Agent 2 — Optimizer (`optimizer.py`)
 
-### Status: Now a tool-using agent: drafts, checks and revises its own rewrite before submitting it (10/27/2026). Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
+### Status: Thinking off, and the minimum saving stated in the message up front (11/4/2026, not yet confirmed with an eval run). Moved to `claude-haiku-5-5` (11/4/2026). The Validator and the minimum saving now run inside the tool loop, so the model revises after a Validator rejection in the same conversation (11/3/2026). Tool-using agent since 10/30/2026. Earlier: structured outputs, worked examples, edge-case hardening (10/4/2026)
 
-### Tool loop (10/27/2026)
+### Tool loop (10/27/2026, reduced 10/30/2026, Validator moved in 11/3/2026)
 
-The Optimizer used to make one structured-output call. Its rewrite was only checked afterwards, in the orchestrator, and a failure cost a whole retry. Now `callOptimizerLLM()` runs a manual tool-use loop with three tools:
+The Optimizer used to make one structured-output call. Its rewrite was only checked afterwards, in the orchestrator, and a failure cost a whole retry. Now `callOptimizerLLM()` runs a manual tool-use loop with one tool:
 
-- `count_tokens(text)` counts tokens with the target's tokenizer (`tokens.py`)
-- `check_rewrite(rewrite)` runs `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`) and returns every problem plus both token counts
-- `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop. A changed rewrite is checked first, and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again
+- `submit_rewrite(...)` takes the `Rewrite` fields and ends the loop once accepted. `findSubmissionProblems()` checks a changed rewrite, cheapest first, and a failing one is refused (`is_error`) with the reasons, so the model fixes it and submits again:
+  1. `findRewriteProblems()` (`findBrokenLocks` + `findIntentChanges` + `findDroppedOptions`)
+  2. The saving, with the target's tokenizer, against `minTokensSaved` / `minPercentSaved` (the orchestrator passes `MIN_TOKENS_SAVED` / `MIN_PERCENT_SAVED`, or 0 with answers, which refuses only a longer rewrite). The refusal gives the measured saving, so the model can cut more or submit unchanged. Since 11/4 the message also states the bar before the first submission: the prompt's token count and the fewest tokens a changed rewrite must cut (`tokensToSave()`, the larger of the two minimums). The model can't count tokens, so before this it learned the bar only from refusals, one turn each: in the phase3 eval `multi-translate` spent 3 turns on them and saved nothing, and 16 Optimizer runs took 25 turns
+  3. `validate`, when the caller passes one: the orchestrator's `SubmissionValidator`, which runs the Validator (or passes a filler-only edit without it). A failed verdict is refused with the Validator's reasoning and how many reviews are left. At most `MAX_VALIDATIONS = 2` per run; once they're all used and the last failed, the loop stops
+- A submission identical to the prompt counts as unchanged, so it never spends a validation
 
 Design decisions:
 
+- **No separate `check_rewrite` or `count_tokens` tools (removed 10/30):** `check_rewrite` ran the same checks as `submit_rewrite`, so checking first cost one extra API call and made the model write the rewrite twice. Since 11/3 the saving is measured inside `submit_rewrite` instead, so the model gets the number without a separate tool.
+- **The Validator runs inside `submit_rewrite`, not as a `validate_rewrite` tool (11/3):** a separate tool would make the model write each rewrite twice, the same problem as `check_rewrite`. The 11/3 baseline (`evals/results/baseline.summary.json`) showed the extra Optimizer calls came from Validator rejections followed by a whole orchestrator retry (16 of 42 runs), not from local refusals (1 of 42). Now a rejection costs one more turn in the same cached conversation, with the rejected rewrite and the reasoning already in context.
+- **The orchestrator owns validation:** it passes `validate` (a `SubmissionValidator`), so the pass score, type rules, the filler-only skip, the hooks and the stage updates stay in `orchestrator.py`, and the Optimizer doesn't import `local_rewrite` (which imports it). Each draft is saved as an optimization before its validation, as before, so the backend links every verdict to the rewrite it judged
 - **Manual loop, not the SDK's tool runner:** the loop has to end on a submit call rather than on `end_turn`, and it needs a hard cap. A manual loop does both and is easy to fake in tests.
-- **`MAX_TOOL_TURNS = 6` API calls per run.** If no submission is accepted in time, the original prompt is kept. With `MAX_OPTIMIZATION_ATTEMPTS = 2` in the orchestrator, one prompt can cost up to 12 Optimizer calls, so watch the logged turn counts. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
+- **`MAX_TOOL_TURNS = 4` API calls per run** (3 before 11/3): a submission plus fixes after local, saving or Validator refusals. If no submission is accepted in time, the original prompt is kept. The orchestrator's outer retry no longer runs for a real Optimizer (it validates its own submissions), so one prompt costs at most 4 Optimizer calls and 2 Validator calls, down from 6 and 2. The Optimizer runs at `OPTIMIZER_EFFORT = "low"` (Sonnet 5.5 defaults to `high`) to keep each turn short; `submit_rewrite` still refuses anything the local checks reject, at any effort.
+- **Thinking off (`OPTIMIZER_THINKING`, 11/4/2026):** at effort `low` the Optimizer still wrote ~537 output tokens a turn in the phase3 eval, mostly thinking, for a rewrite of ~20 tokens. Output tokens were 60% of the pipeline's spend there, nearly all of them the Optimizer's (the Validator writes ~52 a call). The `Rewrite` schema puts `preservedConstraints` first, so the model still lists what it must keep before it writes. Haiku 5.5 accepts disabled thinking only at effort `high` or below (a test guards this). Go back to `{"type": "adaptive"}` if the eval shows worse rewrites.
 - **No forced `tool_choice`:** Sonnet 5.5 returns a 400 for it. The system prompt says to always finish with `submit_rewrite`, and a turn with no tool call gets one reminder.
 - **Every tool is `strict: true`**, so tool inputs always match their schema. `submit_rewrite`'s schema is generated from `Rewrite`, so the two can't drift apart.
 - **Caching:** the system prompt keeps its breakpoint, and top-level `cache_control` caches the growing conversation, so each turn pays full price only for what's new.
-- **The orchestrator still runs `findRewriteProblems()`** as a safety net, and still retries when the Validator rejects a rewrite.
+- **The orchestrator still runs `findRewriteProblems()`** as a safety net, and still validates and retries a rewrite the Optimizer returns without having validated it (only possible for an Optimizer called without `validate`).
 
 ### What it does
 
@@ -173,24 +179,24 @@ Output:
 - **Field order is generation order:** `Rewrite` is `preservedConstraints` → `unchanged` → `optimizedPrompt` → `changes`. The model has to list what it must keep and decide whether to rewrite at all before it writes anything.
 - **An explicit `unchanged` flag:** already-direct prompts are marked unchanged and the original is kept, even if the model also wrote a rewrite. This replaced relying on the model to copy the prompt back exactly.
 - **System prompt explains the stakes, then gives rules:** it says the rewrite is a one-click replacement in a browser extension and that a changed meaning costs more trust than any tokens saved. Then four lists: what to remove (greetings, hedging, repeated instructions, wordy phrasing), what to copy exactly (code, URLs, paths, quotes, numbers, names, negations, examples, step order, the prompt's language, context that changes the answer), what isn't worth an edit (synonym swaps, dropping only "please"), and how to answer.
-- **8 worked examples, one rule each** (`OPTIMIZER_EXAMPLES`): filler removal, hard constraints, code copied exactly, negations and answer-changing context, already direct, "please"-only, merged duplicate instructions, and a Spanish prompt that stays in Spanish. Two of the eight are `unchanged`, so the model doesn't learn to always rewrite. They are rendered as `<example><input>…</input><output>…JSON…</output></example>` so the model sees every field filled in.
+- **7 worked examples, one rule each** (`OPTIMIZER_EXAMPLES`): filler removal, hard constraints, code copied exactly, negations and answer-changing context, already direct, "please"-only, and merged duplicate instructions. The Spanish example was removed on 11/4/2026: non-English prompts no longer reach the Optimizer (see the Orchestrator section). Two of the seven are `unchanged`, so the model doesn't learn to always rewrite. They are rendered as `<example><input>…</input><output>…JSON…</output></example>` so the model sees every field filled in.
 - **Examples don't overlap the test prompts:** none of them reuse a prompt from the `__main__` cases, and a test enforces it, so passing those cases still means something.
 - **The prompt is treated as text, not instructions:** the system prompt says to rewrite or leave a prompt like "ignore previous instructions", never act on it.
 - **Rejected rewrites come back with their reason:** on a retry, each earlier rewrite is shown in `<rejected_rewrite>` tags with the Validator's reason, and the system prompt says to start again from the original, keep the cuts that were fine, restore what was lost, and never return a rejected rewrite again.
 - **Cached system prompt:** the system prompt is identical on every call (about 1,570 tokens by the `o200k_base` estimate), so it's sent with `cache_control: ephemeral`. Only the per-prompt text is in `messages`. Cache reads and writes are logged to confirm the cache is hit.
-- **Model moved to `claude-sonnet-5-5`** (`OPTIMIZER_MODEL`), because structured outputs weren't available on `claude-sonnet-4-6`.
+- **Model moved to `claude-sonnet-5-5`** (`OPTIMIZER_MODEL`), because structured outputs weren't available on `claude-sonnet-4-6`. **Then to `claude-haiku-5-5` (11/4/2026):** in the 120-run phase1 eval the Optimizer cost $0.28, more than half the pipeline's API spend, and Haiku 5.5 is 20x cheaper per token ($0.10/$0.50 vs $2/$10 per million). Rewriting a short prompt is a small task, and every submission is still checked locally and by the Validator. Effort stays `low` (Haiku's default is `medium`). Not yet confirmed with an eval run: go back to Sonnet if rewrites get worse.
 - **Same structure as Agent 1:** plain functions plus a data-only `OptimizationResult` dataclass, so the orchestrator can call `optimizePrompt()` the same way it calls `auditPrompt()`.
 - **Reuses `estimateCost()` from Agent 1** for the table, instead of a second copy of the rate.
 
 ### Challenges + fixes
 
-| Challenge                                            | Cause                                                                                              | Fix                                                                                                                                                                                            |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Challenge                                            | Cause                                                                                              | Fix                                                                                                                                                                                                |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Cost column always showed`$0.000`                  | A single prompt costs a fraction of a cent, and`estimateCost()` rounded to 3 decimals            | Table shows**cost per 1,000 runs** instead, which is also closer to how real apps pay (same prompt, many calls). `estimateCost()` no longer rounds (10/4), but the table keeps this column |
-| Negative "savings"                                   | The LLM can return a rewrite that's*longer* than the original (e.g. for an already short prompt) | `tokensSaved = max(original - optimized, 0)`, so savings are never negative                                                                                                                  |
-| `ZeroDivisionError` on empty prompt                | `percentSaved` divides by `originalTokens`                                                     | Returns`0.0` when `originalTokens` is 0 (same kind of bug as the one in Agent 1)                                                                                                           |
-| Long prompts broke the table layout                  | A 500-word prompt made one very wide row                                                           | `textwrap` wraps the prompt column (default 50 chars); other cells are padded so every line has the same width                                                                               |
-| Testing without an API key / without spending tokens | `callOptimizerLLM()` makes a real Claude call                                                    | Tests swap the module's`client` for a fake one with `monkeypatch`. The fake records the request and returns a set reply, so we can check both what gets sent and how the result is handled |
+| Negative "savings"                                   | The LLM can return a rewrite that's*longer* than the original (e.g. for an already short prompt) | `tokensSaved = max(original - optimized, 0)`, so savings are never negative                                                                                                                      |
+| `ZeroDivisionError` on empty prompt                | `percentSaved` divides by `originalTokens`                                                     | Returns`0.0` when `originalTokens` is 0 (same kind of bug as the one in Agent 1)                                                                                                               |
+| Long prompts broke the table layout                  | A 500-word prompt made one very wide row                                                           | `textwrap` wraps the prompt column (default 50 chars); other cells are padded so every line has the same width                                                                                   |
+| Testing without an API key / without spending tokens | `callOptimizerLLM()` makes a real Claude call                                                    | Tests swap the module's`client` for a fake one with `monkeypatch`. The fake records the request and returns a set reply, so we can check both what gets sent and how the result is handled     |
 
 | The model could add a preamble or commentary around the rewrite | The reply was free text, so nothing separated the prompt from anything else the model wrote | Structured output: the rewrite is the `optimizedPrompt` field of the `Rewrite` schema |
 | "Return it unchanged" wasn't reliable | The model had to copy the prompt back exactly, and a one-word difference counted as a rewrite | Added the `unchanged` flag. When it's true the original is kept, whatever is in `optimizedPrompt` |
@@ -201,7 +207,7 @@ Output:
 
 ### Known limitations / things to revisit
 
-- Model is a constant in the file (`OPTIMIZER_MODEL = "claude-sonnet-5-5"`), should move to config along with pricing. Agent 1's review uses `claude-haiku-5-5` and Agent 3 is still on `claude-sonnet-4-6`
+- Model is a constant in the file (`OPTIMIZER_MODEL = "claude-haiku-5-5"`), should move to config along with pricing. All three agents now use `claude-haiku-5-5`
 - `optimizePrompt()` on its own doesn't check that the rewrite kept every item in `preservedConstraints`. The list is the model's own, and nothing compares it to the rewrite. Inside the pipeline, Agent 3 checks the rewrite and the orchestrator falls back to the original if it fails
 - If the rewrite is longer, `optimizePrompt()` reports 0% saved but still returns the longer prompt. The orchestrator discards a rewrite that saves nothing (see the Orchestrator section)
 - The 10 edge cases in `__main__` (filler, concise, constraints, code, URL + quote, negation, injection, "please"-only, duplicates, Spanish) call the real API and print PASS/FAIL, but they aren't a pytest suite and don't run in CI
@@ -212,34 +218,38 @@ Output:
 
 Offline, no API key needed. The fake client records the request and returns a canned parsed `Rewrite`. 31 tests (22 functions, some parametrized).
 
-| Test                                                       | Checks                                                                                  |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `test_countTokens_counts_nonempty_text`                  | Non-empty text gives > 0 tokens, empty string gives 0                                   |
-| `test_buildUserMessage_without_issues`                   | No issues → message is just`PROMPT TO OPTIMIZE:\n<prompt>`                           |
-| `test_buildUserMessage_with_issues`                      | Issues are listed as bullets before the prompt                                          |
-| `test_buildUserMessage_with_rejected_attempts`           | Rejected rewrites and their reasons appear between the issues and the prompt            |
-| `test_buildUserMessage_without_rejected_attempts`        | No rejected attempts → no rejection section                                            |
-| `test_optimizePrompt_forwards_rejected_attempts`         | Rejected attempts given to `optimizePrompt()` reach the LLM request                   |
-| `test_callOptimizerLLM_sends_system_prompt_and_strips`   | The system prompt and schema are sent, and whitespace is stripped from the rewrite      |
-| `test_optimizePrompt_computes_savings`                   | Token counts, tokens saved and percent saved are correct                                |
-| `test_optimizePrompt_unchanged_keeps_original`           | A prompt marked unchanged keeps the original text, even if the LLM rewrote it anyway    |
-| `test_optimizePrompt_unusable_reply_keeps_original`      | A refused, truncated or unparseable reply falls back to the original (parametrized)     |
-| `test_optimizePrompt_empty_rewrite_keeps_original`       | An empty rewrite is never returned                                                      |
-| `test_optimizePrompt_never_negative`                     | A longer rewrite gives 0 saved, not a negative number                                   |
-| `test_optimizePrompt_empty_prompt`                       | Empty prompt doesn't divide by zero                                                     |
-| `test_optimizePrompt_default_issues`                     | `issues` defaults to an empty list                                                    |
-| `test_formatComparisonTable_contains_prompts_and_counts` | Both prompts, counts, percent and headers are in the table                              |
-| `test_formatComparisonTable_wraps_long_prompts`          | Long prompts wrap and every line has the same width                                     |
+| Test                                                       | Checks                                                                                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `test_countTokens_counts_nonempty_text`                  | Non-empty text gives > 0 tokens, empty string gives 0                                                               |
+| `test_buildUserMessage_without_issues`                   | No issues → message is just`PROMPT TO OPTIMIZE:\n<prompt>`                                                       |
+| `test_buildUserMessage_with_issues`                      | Issues are listed as bullets before the prompt                                                                      |
+| `test_buildUserMessage_with_rejected_attempts`           | Rejected rewrites and their reasons appear between the issues and the prompt                                        |
+| `test_buildUserMessage_without_rejected_attempts`        | No rejected attempts → no rejection section                                                                        |
+| `test_optimizePrompt_forwards_rejected_attempts`         | Rejected attempts given to `optimizePrompt()` reach the LLM request                                               |
+| `test_callOptimizerLLM_sends_system_prompt_and_strips`   | The system prompt and schema are sent, and whitespace is stripped from the rewrite                                  |
+| `test_disabled_thinking_uses_an_accepted_effort`         | Thinking is only disabled at an effort Haiku 5.5 accepts it with (`high` or below)                                  |
+| `test_buildUserMessage_with_saving_minimum`              | With a minimum saving, the prompt's token count and the fewest tokens to cut come before the prompt                |
+| `test_buildUserMessage_without_saving_minimum`           | No minimum, or a zero one (a prompt with answers), adds no saving line (parametrized)                               |
+| `test_tokensToSave_matches_the_saving_check`             | The number asked for is the saving check's own bar: a rewrite cutting exactly that many passes, one less is refused |
+| `test_optimizePrompt_computes_savings`                   | Token counts, tokens saved and percent saved are correct                                                            |
+| `test_optimizePrompt_unchanged_keeps_original`           | A prompt marked unchanged keeps the original text, even if the LLM rewrote it anyway                                |
+| `test_optimizePrompt_unusable_reply_keeps_original`      | A refused, truncated or unparseable reply falls back to the original (parametrized)                                 |
+| `test_optimizePrompt_empty_rewrite_keeps_original`       | An empty rewrite is never returned                                                                                  |
+| `test_optimizePrompt_never_negative`                     | A longer rewrite gives 0 saved, not a negative number                                                               |
+| `test_optimizePrompt_empty_prompt`                       | Empty prompt doesn't divide by zero                                                                                 |
+| `test_optimizePrompt_default_issues`                     | `issues` defaults to an empty list                                                                                |
+| `test_formatComparisonTable_contains_prompts_and_counts` | Both prompts, counts, percent and headers are in the table                                                          |
+| `test_formatComparisonTable_wraps_long_prompts`          | Long prompts wrap and every line has the same width                                                                 |
 | `test_examples_are_consistent`                           | Each worked example agrees with itself, e.g. unchanged ones copy the input and list no edits (one case per example) |
-| `test_examples_include_unchanged_cases`                  | The examples include both rewritten and unchanged outcomes                              |
-| `test_code_example_keeps_code_block`                     | Code in an example survives the rewrite character for character                         |
-| `test_system_prompt_contains_examples`                   | Every example is rendered into the system prompt                                        |
-| `test_system_prompt_is_cacheable`                        | The system prompt is long enough to be cached, with margin                              |
-| `test_examples_do_not_reuse_main_cases`                  | No example reuses a prompt from the `__main__` cases                                  |
+| `test_examples_include_unchanged_cases`                  | The examples include both rewritten and unchanged outcomes                                                          |
+| `test_code_example_keeps_code_block`                     | Code in an example survives the rewrite character for character                                                     |
+| `test_system_prompt_contains_examples`                   | Every example is rendered into the system prompt                                                                    |
+| `test_system_prompt_is_cacheable`                        | The system prompt is long enough to be cached, with margin                                                          |
+| `test_examples_do_not_reuse_main_cases`                  | No example reuses a prompt from the `__main__` cases                                                              |
 
 ## Agent 3 — Validator (`validator.py`)
 
-### Status: Core logic working and tested in CI, called by the orchestrator (10/1/2026)
+### Status: Structured verdict (`lost`, `score`, `reason`) on `claude-haiku-5-5` at effort `low`, shorter system prompt (11/4/2026). Core logic working and tested in CI, called by the orchestrator (10/1/2026)
 
 ### What it does
 
@@ -269,48 +279,51 @@ print(result.qualityScore, result.passed, result.reasoning)
 
 - **Agent 3 is the safety net for Agent 2:** Agent 2 is told to keep meaning over length, but nothing checked that it did. Agent 3 checks it, so a shorter prompt that changes the result is caught before it reaches the user.
 - **Fixed score scale in the system prompt:** the score is an integer from 1 to 10, and each band (9–10, 6–8, 3–5, 1–2) describes what counts as a loss, e.g. a dropped constraint or example puts the rewrite at 3–5. This makes scores more consistent between runs than asking for a plain "rate this 1–10".
-- **ReAcT steps before the verdict:** the system prompt makes the model list the original's requirements (READ), check each one against the rewrite (ANSWER), quote what was lost (CITE) and decide whether the loss changes the output (THINK) before it writes `SCORE:`. The score is then based on specific findings instead of a general impression. This costs more output tokens on every validation.
+- **Losses listed before the score (11/4/2026):** the reply is a `Verdict` (structured output, `output_config.format`): `lost`, then `score`, then `reason`. Field order is generation order, so the model names what was dropped before it scores, which is what the ReAcT steps (READ, ANSWER, CITE, THINK) did in free text at about 300 output tokens a call. `passed` is computed in code from the score (at least 6, or the prompt type's higher bar); the rubric already puts a lost requirement at 3-5. Until the phase2 eval it also failed any listed loss, which rejected rewrites scored 7-9 and cost a retry each, so the system prompt now also says `lost` holds only requirements, never filler cuts or wording. What was lost is added to the reason, since that's what the Optimizer's retry is told to fix.
+- **Politeness is never a requirement:** the system prompt lists what is never a requirement (greetings, thanks, politeness, hedging, filler, repeats, irrelevant backstory) and what is. The old prompt scored filler cuts 3-5 as a lost "tone": in phase1, `filler-summary` was rejected at 4, and the Optimizer's retry put "please" and "thanks" back.
 - **Strict by design:** the prompt says that a shorter prompt that changes meaning fails, even if it saves tokens. This matches the rule behind Agent 2.
 - **No LLM call for identical prompts:** if the rewrite matches the original (ignoring surrounding whitespace), it passes with a score of 10 without calling the API, following the "don't waste tokens to save tokens" idea from Agent 1.
-- **Parsing never crashes:** a reply that can't be parsed gives score 1 (the lowest score on the scale) and `passed = False`. An unreadable verdict counts as a fail, not a pass.
+- **An unusable reply is an error, not a fail:** a reply cut off at `max_tokens`, refused, with no text, or not a valid `Verdict` raises `ValidatorReplyError`. The orchestrator handles it like a failed API call: the run falls back and records the error, and nothing is sent to the Optimizer as a rejection reason. (Until 11/4/2026 such a reply was scored 1 and failed silently.)
 - **Same structure as Agents 1 and 2:** plain functions plus a data-only `ValidationResult` dataclass.
 
 ### Challenges + fixes
 
-| Challenge                                              | Cause                                                                                                                                                                                        | Fix                                                                                                                                                                                                                                       |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Reply was hard to parse reliably                       | The first system prompt asked for`Score <float 1, 10>` / `Passed <Yes or No>` / `Reasoning: ...`, so the format was inconsistent: some lines had colons and some didn't                | Changed to fixed`SCORE:` / `PASSED:` / `REASON:` labels. `parseValidatorReply()` matches them case-insensitively and ignores surrounding whitespace                                                                               |
-| Score bands were empty, then had a gap                 | The first version listed ranges (`7-8.99:`, `5-6.99:` ...) without descriptions. The next version described them but used `0:` for the bottom band, which didn't cover scores like 0.5 | Wrote a description for each band, lined the bands up with the pass threshold of 6, and changed the bottom band to`0-0.99`                                                                                                              |
-| A non-numeric score (e.g.`SCORE: high`) would crash  | `float()` raises `ValueError`                                                                                                                                                            | Caught the error and kept the default score (now 1)                                                                                                                                                                                         |
-| Only the verdict was visible, not how it was reached   | The parser threw away everything except the three fields                                                                                                                                     | Added`reactTrace`: everything before the `SCORE:` line is kept on the result                                                                                                                                                          |
-| No tests and no CI coverage for Agent 3                | It was the only agent without tests                                                                                                                                                          | Offline tests with a fake client (`tests/test_validator.py`) run in CI on every PR. Live tests against the real API (`tests/test_validator_live.py`) run in their own workflow; see the CI/CD section above for how they're triggered |
-| Testing the validator's*judgment*, not just the code | The fake client only checks how a reply is handled, not whether Claude grades correctly                                                                                                      | The live tests use two known cases: a rewrite that only removes filler words must pass, and a rewrite that drops a word limit and a JSON format must fail. If the prompt or model changes and grading gets worse, these fail              |
-| Scores were based on a general impression | The prompt only asked for a score, a verdict and a reason, so `reactTrace` was almost always empty | Reworked the system prompt around the ReAcT steps (READ, ANSWER, CITE, THINK), which must be written before the `SCORE:` line. The scale also changed from 0–10 decimals to 1–10 integers |
-| Two offline tests failed after the ReAcT rework | The fallback score in `parseValidatorReply()` changed from 0 to 1 to match the new 1–10 scale, but `test_parseValidatorReply_unparseable_uses_defaults` and `test_parseValidatorReply_bad_score` still expected 0 | Updated both tests to expect 1. The docstring and the code now agree on the fallback |
-| The reply would be cut off before the verdict | `max_tokens` was still 300, which was set when the reply was three lines. The ReAcT steps are longer than that, so the reply would end before `SCORE:` and every rewrite would parse as score 1 / fail | Raised `max_tokens` to 1024. Not confirmed with a live run yet: run `pytest -m live` with an API key to check |
+| Challenge                                              | Cause                                                                                                                                                                                                                                                  | Fix                                                                                                                                                                                                                                       |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reply was hard to parse reliably                       | The first system prompt asked for`Score <float 1, 10>` / `Passed <Yes or No>` / `Reasoning: ...`, so the format was inconsistent: some lines had colons and some didn't                                                                          | Changed to fixed`SCORE:` / `PASSED:` / `REASON:` labels. `parseValidatorReply()` matches them case-insensitively and ignores surrounding whitespace                                                                               |
+| Score bands were empty, then had a gap                 | The first version listed ranges (`7-8.99:`, `5-6.99:` ...) without descriptions. The next version described them but used `0:` for the bottom band, which didn't cover scores like 0.5                                                           | Wrote a description for each band, lined the bands up with the pass threshold of 6, and changed the bottom band to`0-0.99`                                                                                                              |
+| A non-numeric score (e.g.`SCORE: high`) would crash  | `float()` raises `ValueError`                                                                                                                                                                                                                      | Caught the error and kept the default score (now 1)                                                                                                                                                                                       |
+| Only the verdict was visible, not how it was reached   | The parser threw away everything except the three fields                                                                                                                                                                                               | Added`reactTrace`: everything before the `SCORE:` line is kept on the result                                                                                                                                                          |
+| No tests and no CI coverage for Agent 3                | It was the only agent without tests                                                                                                                                                                                                                    | Offline tests with a fake client (`tests/test_validator.py`) run in CI on every PR. Live tests against the real API (`tests/test_validator_live.py`) run in their own workflow; see the CI/CD section above for how they're triggered |
+| Testing the validator's*judgment*, not just the code | The fake client only checks how a reply is handled, not whether Claude grades correctly                                                                                                                                                                | The live tests use two known cases: a rewrite that only removes filler words must pass, and a rewrite that drops a word limit and a JSON format must fail. If the prompt or model changes and grading gets worse, these fail              |
+| Scores were based on a general impression              | The prompt only asked for a score, a verdict and a reason, so `reactTrace` was almost always empty                                                                                                                                                   | Reworked the system prompt around the ReAcT steps (READ, ANSWER, CITE, THINK), which must be written before the `SCORE:` line. The scale also changed from 0–10 decimals to 1–10 integers                                             |
+| Two offline tests failed after the ReAcT rework        | The fallback score in `parseValidatorReply()` changed from 0 to 1 to match the new 1–10 scale, but `test_parseValidatorReply_unparseable_uses_defaults` and `test_parseValidatorReply_bad_score` still expected 0                               | Updated both tests to expect 1. The docstring and the code now agree on the fallback                                                                                                                                                      |
+| Would crash on `claude-haiku-5-5` (11/4/2026)        | Haiku 5.5 thinks by default, so the reply can start with a `thinking` block, and the reply was read as `response.content[0].text`. That raised `AttributeError`, which the orchestrator didn't catch. Thinking also counts toward `max_tokens` | The reply is read by block type. Effort is set to `low`, `max_tokens` raised to 4096, and an unusable reply raises `ValidatorReplyError`                                                                                            |
+| Validator calls timed out                              | In phase1, 15 of 45 calls on `claude-sonnet-4-6` hit the 10-second timeout while writing the ReAcT trace                                                                                                                                             | Haiku 5.5 and a short JSON verdict instead of the trace (11/4/2026). Not yet confirmed with an eval run                                                                                                                                   |
+| The reply would be cut off before the verdict          | `max_tokens` was still 300, which was set when the reply was three lines. The ReAcT steps are longer than that, so the reply would end before `SCORE:` and every rewrite would parse as score 1 / fail                                             | Raised `max_tokens` to 1024. Not confirmed with a live run yet: run `pytest -m live` with an API key to check                                                                                                                         |
 
 ### Known limitations / things to revisit
 
-- **`passed` comes from the model, not the score:** a reply like `SCORE: 4` / `PASSED: Yes` counts as a pass. The rule "pass only at 6 or higher" is only enforced by the prompt
-- **A cut-off reply looks the same as a bad rewrite:** if the reply still runs past `max_tokens` (now 1024), there is no `SCORE:` line and the result is score 1 / fail. `stop_reason` isn't checked, so the caller can't tell the two apart
-- `qualityScore` is declared as `int`, but the parser returns a `float` (e.g. 8.0)
-- Model is hardcoded (`claude-sonnet-4-6`). Agent 2 moved to `claude-sonnet-5-5` for structured outputs; moving Agent 3 the same way would replace the `SCORE:` / `PASSED:` / `REASON:` text parsing and fix the first three limitations in this list
-- The two prompts are sent as plain labeled text (`original prompt:` / `optimized prompt:`), not in tags, and the system prompt doesn't say to treat them as text only (Agent 2's does)
+- Model is hardcoded (`VALIDATOR_MODEL = "claude-haiku-5-5"`), should move to config along with pricing
 - The validator is a single LLM judge, so the same pair of prompts can score slightly differently between runs. Scores close to 6 are the least reliable
+- The live tests (`pytest -m live`) haven't been run against the structured verdict yet
 
 ### Tests (`tests/test_validator.py`, offline)
 
-| Test                                                   | Checks                                                                         |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `test_buildUserMessage_labels_both_prompts`          | Both prompts are included and labeled                                          |
-| `test_parseValidatorReply_well_formed`               | Score, passed and reason are parsed from a clean reply, and the trace is empty |
-| `test_parseValidatorReply_case_and_whitespace`       | Lowercase labels and extra whitespace still parse                              |
-| `test_parseValidatorReply_keeps_trace`               | Text before`SCORE:` is kept as the trace                                     |
-| `test_parseValidatorReply_unparseable_uses_defaults` | An unreadable reply gives score 1, a fail, and the default reason              |
-| `test_parseValidatorReply_bad_score`                 | A non-numeric score doesn't crash and keeps the default score of 1             |
-| `test_callValidatorLLM_sends_system_prompt`          | The validator system prompt and both prompts are sent                          |
-| `test_validatePrompt_identical_skips_llm`            | Identical prompts pass with score 10 and make no API call                      |
-| `test_validatePrompt_uses_llm_verdict`               | A changed prompt uses the model's score, verdict, reason and trace             |
+| Test                                                    | Checks                                                                                                                                                     |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_buildUserMessage_labels_both_prompts`           | Both prompts are included, each in its own tags                                                                                                            |
+| `test_buildUserMessage_with_type_rules`               | Type rules come first, with the note that weakening one is a loss                                                                                          |
+| `test_parseVerdict_*`                                 | Nothing lost passes; the score decides, and a listed loss is added to the reason; blank losses are ignored; a score under 6 fails; an invalid reply raises |
+| `test_verdict_format_order`                           | The schema lists `lost` before `score`, with every field required                                                                                      |
+| `test_system_prompt_politeness_is_not_a_requirement`  | The system prompt says politeness isn't a requirement                                                                                                      |
+| `test_callValidatorLLM_sends_request`                 | System prompt, both prompts, the model, low effort and the verdict schema are sent                                                                         |
+| `test_callValidatorLLM_reads_text_block`              | The verdict is read after a thinking block, and without one                                                                                                |
+| `test_callValidatorLLM_unusable_reply_raises`         | A reply cut off, refused or without text raises `ValidatorReplyError`                                                                                    |
+| `test_validatePrompt_identical_skips_llm`             | Identical prompts pass with score 10 and make no API call                                                                                                  |
+| `test_validatePrompt_uses_llm_verdict`                | A changed prompt uses the model's score, verdict, reason and trace                                                                                         |
+| `test_validatePrompt_applies_pass_score`              | A prompt type's higher pass score is applied                                                                                                               |
+| `test_validatePrompt_pass_score_never_overrides_fail` | A low score never becomes a pass                                                                                                                           |
 
 Live tests (`tests/test_validator_live.py`, run with `pytest -m live`, need `ANTHROPIC_API_KEY`): `test_filler_removal_passes`, `test_dropped_constraint_fails`.
 
@@ -322,10 +335,10 @@ Live tests (`tests/test_validator_live.py`, run with `pytest -m live`, need `ANT
 
 `countTokens(text, target)` counts tokens the way the LLM the user is prompting would, so the savings shown match what they are billed.
 
-| Target | How it's counted |
-| --- | --- |
-| `chatgpt` (default) | Locally with `tiktoken`, `o200k_base` encoding (GPT-4o and newer) |
-| `claude` | Anthropic's `count_tokens` endpoint (`claude-sonnet-5-5`), minus the message framing |
+| Target                | How it's counted                                                                         |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| `chatgpt` (default) | Locally with `tiktoken`, `o200k_base` encoding (GPT-4o and newer)                    |
+| `claude`            | Anthropic's `count_tokens` endpoint (`claude-sonnet-5-5`), minus the message framing |
 
 ### To test: pytest tests/test_tokens.py -v
 
@@ -348,18 +361,22 @@ Live tests (`tests/test_validator_live.py`, run with `pytest -m live`, need `ANT
 
 The fake client's `count_tokens` returns one token per word plus a fixed framing amount. Caches are cleared before every test.
 
-| Test | Checks |
-| --- | --- |
-| `test_countTokens_chatgpt_uses_o200k` | ChatGPT counts match `o200k_base` |
-| `test_countTokens_empty_text` | Empty text is 0 tokens and makes no API call |
-| `test_countTokens_claude_subtracts_overhead` | Claude counts come from `count_tokens`, minus the framing overhead |
-| `test_countTokens_claude_is_cached` | Counting the same prompt twice calls the API once |
+| Test                                                | Checks                                                                      |
+| --------------------------------------------------- | --------------------------------------------------------------------------- |
+| `test_countTokens_chatgpt_uses_o200k`             | ChatGPT counts match `o200k_base`                                         |
+| `test_countTokens_empty_text`                     | Empty text is 0 tokens and makes no API call                                |
+| `test_countTokens_claude_subtracts_overhead`      | Claude counts come from `count_tokens`, minus the framing overhead        |
+| `test_countTokens_claude_is_cached`               | Counting the same prompt twice calls the API once                           |
 | `test_countTokens_claude_falls_back_on_api_error` | A failed `count_tokens` call gives the local estimate instead of crashing |
-| `test_countTokens_unknown_target` | An unknown target raises `ValueError` |
+| `test_countTokens_unknown_target`                 | An unknown target raises `ValueError`                                     |
 
 ## Orchestrator (`orchestrator.py`)
 
-### Status: Pipeline working and tested offline. Target-aware, retries carry the rejected rewrite (10/4/2026)
+### Status: LLM pass is opt-in from the backend (11/4/2026). Pipeline working and tested offline. Target-aware, retries carry the rejected rewrite (10/4/2026)
+
+### Quick result first, LLM pass on request (11/4/2026)
+
+`runPipeline(..., llm=False)` stops where the Optimizer would be called and returns the free local rewrite (or the prompt unchanged) with `canOptimizeFurther=True`. It's `True` only when the full pass would really call the Optimizer: not for a prompt with nothing to fix, one the local rewrite fixed completely, one under `MIN_TOKENS_FOR_OPTIMIZER`, a non-English one or an injection attempt. The backend runs this by default (`POST /orchestrator` with `optimizeFurther: false`), and the extension shows an "Optimize further" button that sends the same prompt with `optimizeFurther: true`, the full pass. In phase2 the full pass took a median 4.3 s (11 s at p95) whenever an LLM ran; the quick result needs no Optimizer or Validator call. `llm` defaults to `True` in `runPipeline`, so the eval and `scripts/run_pipeline.py` still measure the full pass. Each request is its own run in the database, so "Optimize further" adds a second prompt row and run for the same text.
 
 ### What it does
 
@@ -376,7 +393,7 @@ The steps:
 
 1. Agent 1 audits the prompt. If it finds no issues, the original is returned and Agents 2 and 3 are not called.
 2. Agent 2 rewrites the prompt using Agent 1's issues.
-3. If the rewrite saves no tokens (unchanged or longer), the loop stops and the original is returned.
+3. If the rewrite saves under `MIN_TOKENS_SAVED` (5) tokens or `MIN_PERCENT_SAVED` (2%) of the prompt, the loop stops and the original is returned. A prompt under `MIN_TOKENS_FOR_OPTIMIZER` (15) tokens that the local rewrite can't fix skips Agent 2 altogether.
 4. Agent 3 checks the rewrite against the original. If it passes, the rewrite is returned and the loop stops.
 5. If it fails, the rewrite and Agent 3's reason are stored as a `RejectedAttempt` and Agent 2 tries again with every rejected attempt so far, up to `MAX_OPTIMIZATION_ATTEMPTS` (2) attempts in total. The Optimizer's tool loop already fixes local-check failures, so these attempts only retry Validator rejections.
 6. If no attempt passes, the original prompt is returned.
@@ -423,12 +440,12 @@ Pass `target="claude"` to count with Claude's tokenizer.
 
 ### Bugs encountered + fixes
 
-| Bug | Cause | Fix |
-| --- | --- | --- |
-| `ModuleNotFoundError: No module named 'auditor'` when running `pytest`, so `tests/test_optimizer.py` could not be collected and CI would fail | `orchestrator.py` and `optimizer.py` imported the other agents as `from auditor import ...`. That only works when a file inside `agents/` is run directly. `pytest` runs from the repo root, where the modules are `agents.auditor`, `agents.optimizer`, ... | Changed the imports to `from agents.auditor import ...` in both files (the form `optimizer.py` used before). The orchestrator is now run with `python -m agents.orchestrator` from the repo root |
-| `wasOptimized = True` with 0 tokens saved | If Agent 2 returned the prompt unchanged, Agent 3 passed it automatically (identical prompts) and it was reported as an optimization. If Agent 2 returned a longer rewrite that Agent 3 passed, the longer prompt became `finalPrompt` | The loop stops when `optimizationResult.tokensSaved == 0`, before calling Agent 3, and the original is returned with `wasOptimized = False` |
-| Every attempt would fail validation and the pipeline would always return the original after 3 attempts (6 LLM calls for nothing) | Agent 3's reply was cut off before the `SCORE:` line (`max_tokens=300` with the new ReAcT steps), so each rewrite parsed as a fail | Raised `max_tokens` to 1024 in `validator.py` (see the Agent 3 table). Not confirmed with a live run yet |
-| Testing the pipeline without an API key | `runPipeline()` makes up to 7 Claude calls through the three agents | Tests replace `auditPrompt`, `optimizePrompt` and `validatePrompt` on the `orchestrator` module with fakes (`monkeypatch`). The fakes return set results and record their arguments, so the tests check the order of calls, what is passed between agents, and when the loop stops |
+| Bug                                                                                                                                                 | Cause                                                                                                                                                                                                                                                                      | Fix                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ModuleNotFoundError: No module named 'auditor'` when running `pytest`, so `tests/test_optimizer.py` could not be collected and CI would fail | `orchestrator.py` and `optimizer.py` imported the other agents as `from auditor import ...`. That only works when a file inside `agents/` is run directly. `pytest` runs from the repo root, where the modules are `agents.auditor`, `agents.optimizer`, ... | Changed the imports to `from agents.auditor import ...` in both files (the form `optimizer.py` used before). The orchestrator is now run with `python -m agents.orchestrator` from the repo root                                                                                       |
+| `wasOptimized = True` with 0 tokens saved                                                                                                         | If Agent 2 returned the prompt unchanged, Agent 3 passed it automatically (identical prompts) and it was reported as an optimization. If Agent 2 returned a longer rewrite that Agent 3 passed, the longer prompt became `finalPrompt`                                   | The loop stops when `optimizationResult.tokensSaved == 0`, before calling Agent 3, and the original is returned with `wasOptimized = False`                                                                                                                                              |
+| Every attempt would fail validation and the pipeline would always return the original after 3 attempts (6 LLM calls for nothing)                    | Agent 3's reply was cut off before the `SCORE:` line (`max_tokens=300` with the new ReAcT steps), so each rewrite parsed as a fail                                                                                                                                     | Raised `max_tokens` to 1024 in `validator.py` (see the Agent 3 table). Not confirmed with a live run yet                                                                                                                                                                                 |
+| Testing the pipeline without an API key                                                                                                             | `runPipeline()` makes up to 7 Claude calls through the three agents                                                                                                                                                                                                      | Tests replace `auditPrompt`, `optimizePrompt` and `validatePrompt` on the `orchestrator` module with fakes (`monkeypatch`). The fakes return set results and record their arguments, so the tests check the order of calls, what is passed between agents, and when the loop stops |
 
 ### Known limitations / things to revisit
 
@@ -437,7 +454,7 @@ Pass `target="claude"` to count with Claude's tokenizer.
 - **No handling of API errors:** a rate limit or network error in any agent raises out of `runPipeline()`. It should return the original prompt instead. Only `tokens.py` and Agent 1's `llmReview()` catch `APIError` today
 - **`.env` is not loaded:** none of the agents call `load_dotenv()`, so the key has to be exported in the shell. Without it the first Claude call fails with "Could not resolve authentication method"
 - **A failed optimization costs more than it could save:** 3 attempts are 6 LLM calls (7 if Agent 1 ran its LLM review), all in sequence before the user gets an answer. `MAX_OPTIMIZATION_ATTEMPTS = 3` is a guess and should be tuned on real prompts
-- **No minimum saving:** only a rewrite that saves 0 tokens is skipped. One that saves 1 or 2 tokens still costs a Validator call and is offered to the user
+- ~~**No minimum saving:** only a rewrite that saves 0 tokens is skipped~~ **Fixed (10/30).** A rewrite must save at least 5 tokens and 2% of the prompt, and a prompt under 15 tokens skips the Optimizer. The percentage is low because a long code block with a polite wrapper can save many tokens but few percent. All three values are guesses, to tune on real runs
 - ~~**Whether to optimize depends only on Agent 1's rule checks for prompts under 500 tokens:** e.g. the dragon prompt has 2 filler hits (the threshold is 3), so no issue is flagged and the prompt is returned as-is~~ **Fixed (10/27)**, see Agent 1's limitations: the Auditor now estimates removable tokens, and the LLM review starts at 150 tokens
 - **No cost on the result:** the docstring mentions cost savings, but `OrchestrationResult` only has `tokensSaved` and `percentSaved`
 - **The rewrite is only kept for attempts that were validated:** a rewrite dropped for saving no tokens is not recorded in `attempts`
@@ -447,18 +464,18 @@ Pass `target="claude"` to count with Claude's tokenizer.
 
 ### Tests (`tests/test_orchestrator.py`, offline)
 
-| Test | Checks |
-| --- | --- |
-| `test_runPipeline_no_issues_skips_optimization` | No audit issues → original returned, Agents 2 and 3 not called, no attempts |
-| `test_runPipeline_first_attempt_passes` | A rewrite that passes first time becomes `finalPrompt` and the loop stops |
-| `test_runPipeline_forwards_target` | The target is passed to the Auditor and the Optimizer |
-| `test_runPipeline_defaults_to_chatgpt` | Without a target, the pipeline uses `chatgpt` |
-| `test_runPipeline_retries_with_validator_feedback` | A rejected rewrite is retried, and Agent 2 gets that rewrite and the Validator's reason |
-| `test_runPipeline_passes_all_rejected_attempts` | Every earlier rejection is passed on, not just the latest one |
-| `test_runPipeline_does_not_mutate_audit_issues` | The retry feedback is not added to `auditResult.issues` |
+| Test                                                    | Checks                                                                                                            |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `test_runPipeline_no_issues_skips_optimization`       | No audit issues → original returned, Agents 2 and 3 not called, no attempts                                      |
+| `test_runPipeline_first_attempt_passes`               | A rewrite that passes first time becomes `finalPrompt` and the loop stops                                       |
+| `test_runPipeline_forwards_target`                    | The target is passed to the Auditor and the Optimizer                                                             |
+| `test_runPipeline_defaults_to_chatgpt`                | Without a target, the pipeline uses `chatgpt`                                                                   |
+| `test_runPipeline_retries_with_validator_feedback`    | A rejected rewrite is retried, and Agent 2 gets that rewrite and the Validator's reason                           |
+| `test_runPipeline_passes_all_rejected_attempts`       | Every earlier rejection is passed on, not just the latest one                                                     |
+| `test_runPipeline_does_not_mutate_audit_issues`       | The retry feedback is not added to `auditResult.issues`                                                         |
 | `test_runPipeline_all_attempts_fail_returns_original` | After `MAX_OPTIMIZATION_ATTEMPTS` rejections the original is returned with `wasOptimized = False` and 0 saved |
-| `test_runPipeline_respects_max_attempts` | With the limit set to 1, Agent 2 is called once |
-| `test_runPipeline_no_savings_returns_original` | A rewrite that is unchanged or longer (2 cases) is not validated, retried or returned |
+| `test_runPipeline_respects_max_attempts`              | With the limit set to 1, Agent 2 is called once                                                                   |
+| `test_runPipeline_no_savings_returns_original`        | A rewrite that is unchanged or longer (2 cases) is not validated, retried or returned                             |
 
 Current result: `63 passed, 2 deselected` across all five offline test files (auditor 6, optimizer 31, validator 9, orchestrator 11, tokens 6). The 2 deselected are the live validator tests.
 
@@ -472,14 +489,14 @@ Current result: `63 passed, 2 deselected` across all five offline test files (au
 
 `detectIntent(prompt)` uses spaCy (the Auditor's `loadNlp()`, no API call) to find what a prompt asks the model to do. Each request becomes an `Action` with a class (`generate`, `transform`, `fix`, `explain`, `extract`, `compare`, `classify`, plus `question` and `unclear`), its verb and the thing it acts on:
 
-| Prompt | Action |
-| --- | --- |
-| "Could you please help me fix this bug?" | `fix`, "this bug" |
-| "I was wondering if you could help me come up with some names?" | `generate`, "come up", "some names" |
-| "Give me a quick summary of the French Revolution." | `extract`, "a quick summary of the French Revolution" |
-| "How do I reverse a list in Python?" | `question` |
-| "Can you help me with my essay?" | `unclear`, "my essay" |
-| "Keep it short." / "Don't write code." / "I have a knee injury." | nothing (constraint or context) |
+| Prompt                                                           | Action                                                  |
+| ---------------------------------------------------------------- | ------------------------------------------------------- |
+| "Could you please help me fix this bug?"                         | `fix`, "this bug"                                     |
+| "I was wondering if you could help me come up with some names?"  | `generate`, "come up", "some names"                   |
+| "Give me a quick summary of the French Revolution."              | `extract`, "a quick summary of the French Revolution" |
+| "How do I reverse a list in Python?"                             | `question`                                            |
+| "Can you help me with my essay?"                                 | `unclear`, "my essay"                                 |
+| "Keep it short." / "Don't write code." / "I have a knee injury." | nothing (constraint or context)                         |
 
 The orchestrator uses it in two places:
 
@@ -518,15 +535,15 @@ The orchestrator uses it in two places:
 
 `findVagueness(prompt)` scores how vague a prompt is, locally with spaCy (no API call), and says which words made it so, the same way `detectSignals()` does for prompt types. Each signal comes with a ready-made clarifying question:
 
-| Kind | Points | Example | Question |
-| --- | --- | --- | --- |
-| missing slot | 2 | "Compare React and Vue." (no criteria) | "What should they be judged on: price, speed, ease of use, or something else?" |
-| empty reference | 2 | "Fix **this**." with nothing attached | "What does "this" refer to? Paste it or name it." |
-| judgement word | 1 | "Make it **better**." | "What would "better" look like when it's done?" |
-| fuzzy amount | 1 | "Add **a few** examples." | "How much is "a few"? Give a number if it matters." |
-| ambiguous word | 1 | "**Test** it." | "Should I write tests, or run it and report what happens?" |
-| open scope | 1 | "Add **anything else you think is relevant**." | "What exactly should ... cover?" |
-| optional | 0 | "**Maybe** add tests." | none: it's protected, not vague |
+| Kind            | Points | Example                                              | Question                                                                       |
+| --------------- | ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------ |
+| missing slot    | 2      | "Compare React and Vue." (no criteria)               | "What should they be judged on: price, speed, ease of use, or something else?" |
+| empty reference | 2      | "Fix **this**." with nothing attached          | "What does "this" refer to? Paste it or name it."                              |
+| judgement word  | 1      | "Make it **better**."                          | "What would "better" look like when it's done?"                                |
+| fuzzy amount    | 1      | "Add **a few** examples."                      | "How much is "a few"? Give a number if it matters."                            |
+| ambiguous word  | 1      | "**Test** it."                                 | "Should I write tests, or run it and report what happens?"                     |
+| open scope      | 1      | "Add **anything else you think is relevant**." | "What exactly should ... cover?"                                               |
+| optional        | 0      | "**Maybe** add tests."                         | none: it's protected, not vague                                                |
 
 Missing slots depend on the task (`intent.py`): fix needs the input and what goes wrong, generate needs a length (long-form writing), a language (code) and an audience (writing for readers), transform needs a direction ("improve" toward what?) or a target language/format, compare needs criteria, classify needs categories, and an `unclear` task is missing the action itself. The report has the `score`, a `level` ("clear" under 2, "somewhat vague" from 2, "vague" from 4), up to 3 `questions` (highest points first) and the `optionalParts`.
 
@@ -587,12 +604,7 @@ passed = verdict.score >= 6
 filler_hits = sum(len(re.findall(rf"\b{re.escape(w)}\b", text.lower())) for w in filler_words)
 ```
 
-**4. Add a minimum saving** in the orchestrator, so a rewrite that saves a token or two isn't validated or shown:
-
-```python
-if optimizationResult.percentSaved < MIN_PERCENT_SAVED:
-    break
-```
+**4. ~~Add a minimum saving~~** Done (10/30/2026): see the Orchestrator's known limitations.
 
 **5. Run the pipeline against the real API and turn the `__main__` cases into a live suite.** The Optimizer's 10 edge cases already print PASS/FAIL. As `pytest -m live` tests they could also record which attempt passed, tokens saved and latency. That gives real numbers for the open guesses: `MAX_OPTIMIZATION_ATTEMPTS`, the 1.6 ratio, the filler threshold of 3, and the pass score of 6. Also confirm that Agent 3's reply reaches the `SCORE:` line with `max_tokens=1024`.
 

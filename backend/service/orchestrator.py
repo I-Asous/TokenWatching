@@ -9,6 +9,7 @@ from supabase import Client
 
 from agents.hooks.orchestrator import OrchestrationHooks
 from agents.orchestrator import OrchestrationResult, runPipeline
+from agents.optimizer import Answer
 from agents.validator import ValidationResult
 from repository.client import get_supabase
 from repository.context import create_contexts
@@ -38,6 +39,9 @@ class RunOrchestrator(OrchestrationHooks):
     prompt: str
     target: str
     context: list[ContextCreate] = field(default_factory=list)
+    answers: list[Answer] = field(default_factory=list)
+    # false runs only the free local cleanup; true runs the Optimizer and Validator too
+    llm: bool = False
     # optional: called with each new stage (ex. to tell the user over a websocket)
     on_stage: Callable[[str], None] | None = None
     db: Client = field(default_factory=get_supabase, init=False)
@@ -86,7 +90,7 @@ class RunOrchestrator(OrchestrationHooks):
         self.run_id = savedRun[0]["run_id"]
 
         try:
-            return runPipeline(self.prompt, self.target, hook=self)
+            return runPipeline(self.prompt, self.target, hook=self, answers=self.answers, llm=self.llm)
         except Exception as e:
             update_orchestration(self.db, self.run_id, OrchestrationUpdate(
                 status="failed",
